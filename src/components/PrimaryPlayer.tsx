@@ -17,9 +17,16 @@ const PrimaryPlayer = () => {
   const secondWindowRef = useRef<Window | null>(null)
   const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
   // Clean up resources
   const cleanup = useCallback(() => {
+    // Close the WebRTC peer connection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close()
+      peerConnectionRef.current = null
+    }
+    
     // Stop all tracks in the stream
     if (streamRef.current) {
       const tracks = streamRef.current.getTracks();
@@ -106,8 +113,8 @@ const PrimaryPlayer = () => {
           setIsSecondWindowOpen(false)
           cleanup()
         } else if (event.data === 'windowReady') {
-          // Once the secondary window signals it's ready, start video streaming
-          startStreaming()
+          // Once the secondary window signals it's ready, start WebRTC setup
+          startWebRTCConnection()
         } else if (event.data === 'play') {
           if (videoRef.current) {
             videoRef.current.play();
@@ -118,6 +125,12 @@ const PrimaryPlayer = () => {
             videoRef.current.pause();
             setIsPaused(true);
           }
+        } else if (event.data?.type === 'webrtc-answer') {
+          // Handle the WebRTC answer from the secondary window
+          handleWebRTCAnswer(event.data.answer)
+        } else if (event.data?.type === 'ice-candidate') {
+          // Handle ICE candidate from secondary window
+          handleIceCandidate(event.data.candidate)
         }
       }
       
@@ -140,11 +153,71 @@ const PrimaryPlayer = () => {
     }
   }
   
-  // Start streaming the video to the second window
-  const startStreaming = async () => {
+  // Handle WebRTC answer from secondary window
+  const handleWebRTCAnswer = async (answer: RTCSessionDescriptionInit) => {
     try {
-      console.log('Starting video streaming...')
-      setConnectionStatus('Setting up video streaming...')
+      console.log('Received WebRTC answer from secondary window');
+      
+      if (!peerConnectionRef.current) {
+        console.error('No peer connection available')
+        return
+      }
+      
+      console.log('Setting remote description from answer');
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+      setConnectionStatus('WebRTC connection established');
+      
+      // Add a timeout to check if connection was successful
+      setTimeout(() => {
+        if (peerConnectionRef.current?.connectionState !== 'connected') {
+          console.log('WebRTC connection not established after timeout, trying fallback');
+          
+          // Try fallback if connection failed
+          if (videoRef.current?.src && secondWindowRef.current) {
+            console.log('Sending fallback video URL:', videoRef.current.src);
+            secondWindowRef.current.postMessage({
+              type: 'fallbackVideo',
+              sourceUrl: videoRef.current.src
+            }, '*');
+          }
+        }
+      }, 5000); // 5 second timeout
+    } catch (error) {
+      console.error('Error setting remote description:', error)
+      setConnectionStatus(`WebRTC error: ${error instanceof Error ? error.message : String(error)}`)
+      
+      // Try fallback on error
+      if (videoRef.current?.src && secondWindowRef.current) {
+        console.log('Error in WebRTC, sending fallback video URL');
+        secondWindowRef.current.postMessage({
+          type: 'fallbackVideo',
+          sourceUrl: videoRef.current.src
+        }, '*');
+      }
+    }
+  }
+  
+  // Handle ICE candidate from secondary window
+  const handleIceCandidate = (candidate: RTCIceCandidateInit | null) => {
+    try {
+      if (!peerConnectionRef.current) {
+        console.error('No peer connection available')
+        return
+      }
+      
+      if (candidate) {
+        peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+      }
+    } catch (error) {
+      console.error('Error adding ICE candidate:', error)
+    }
+  }
+  
+  // Start WebRTC connection
+  const startWebRTCConnection = async () => {
+    try {
+      console.log('Starting WebRTC connection setup...')
+      setConnectionStatus('Setting up WebRTC connection...')
       
       // Ensure the video element is ready before capturing the stream
       if (!videoRef.current) {
@@ -175,7 +248,7 @@ const PrimaryPlayer = () => {
           await video.play()
         }
         
-        // Capture the video stream with cross-browser support
+        // Capture the video stream
         const stream = captureVideoStream(video);
         console.log('Captured stream with tracks:', stream.getTracks().length)
         
@@ -185,167 +258,164 @@ const PrimaryPlayer = () => {
           return
         }
         
-        // Create a video source that will be served to the secondary window
-        const mediaSource = new MediaSource();
-        const videoUrl = URL.createObjectURL(mediaSource);
+        // Create a peer connection
+        const peerConnection = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+          ]
+        })
+        peerConnectionRef.current = peerConnection
         
-        // Tell the second window about the source object URL
-        if (secondWindowRef.current) {
-          secondWindowRef.current.postMessage({
-            type: 'videoSource',
-            url: videoUrl
-          }, '*');
-          
-          setConnectionStatus('Video source created, waiting for streams to start...');
-          
-          // Setup direct stream transmission
-          // Since MediaSource API is complex for live streaming,
-          // let's use a simpler approach: clone and directly inject the video element
-          
-          // Get the original video element's dimensions
-          const { videoWidth, videoHeight } = video;
-          
-          // Create a canvas to render video frames
-          const canvas = document.createElement('canvas');
-          canvas.width = videoWidth || 640;
-          canvas.height = videoHeight || 480;
-          const ctx = canvas.getContext('2d');
-          
-          // Create a direct stream from the canvas
-          const canvasStream = canvas.captureStream(30); // 30fps
-          
-          // Send the stream tracks to the second window
-          if (canvasStream.getTracks().length > 0) {
-            // Let the secondary window know we have the stream ready
-            secondWindowRef.current.postMessage({
-              type: 'streamReady',
-              tracks: canvasStream.getTracks().length
-            }, '*');
+        // Monitor connection state changes
+        peerConnection.onconnectionstatechange = () => {
+          console.log(`Connection state changed: ${peerConnection.connectionState}`)
+          setConnectionStatus(`WebRTC connection: ${peerConnection.connectionState}`)
+
+          if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
+            console.error('WebRTC connection failed or disconnected')
             
-            // Animation function to continuously draw the video to canvas
-            const drawVideoFrame = () => {
-              if (!secondWindowRef.current || secondWindowRef.current.closed) {
-                return; // Stop if window closed
-              }
-              
-              if (video.readyState >= 2 && ctx) {
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              }
-              
-              requestAnimationFrame(drawVideoFrame);
-            };
-            
-            // Start drawing frames
-            drawVideoFrame();
-            
-            // Send the canvas stream directly
-            const streamData = {
-              type: 'streamData',
-              stream: canvasStream // This will be cloned properly by the browser
-            };
-            
-            try {
-              // Transfer the stream to the secondary window
-              // Note: This works in same-origin contexts and requires browser support
-              secondWindowRef.current.postMessage(streamData, '*', [canvasStream]);
-              setConnectionStatus('Stream sent to second window!');
-            } catch (err) {
-              console.error('Error transferring stream:', err);
-              
-              // Fall back to simpler approach - send the video source URL
+            // If there's a src attribute on the video, try to use it as fallback
+            if (videoRef.current?.src && secondWindowRef.current) {
+              console.log('Attempting fallback to direct video URL')
               secondWindowRef.current.postMessage({
                 type: 'fallbackVideo',
-                sourceUrl: video.src
-              }, '*');
-              
-              setConnectionStatus('Using fallback mode: sending video URL');
+                sourceUrl: videoRef.current.src
+              }, '*')
             }
           }
+        }
+        
+        // Monitor ICE connection state
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log(`ICE connection state changed: ${peerConnection.iceConnectionState}`)
+        }
+        
+        // Add stream tracks to the peer connection
+        for (const track of stream.getTracks()) {
+          peerConnection.addTrack(track, stream)
+          console.log(`Added track: ${track.kind} to peer connection`)
+        }
+        
+        // Handle ICE candidates
+        peerConnection.onicecandidate = (event) => {
+          console.log('Generated ICE candidate:', event.candidate ? event.candidate.candidate : 'null (gathering complete)')
+          if (secondWindowRef.current) {
+            // For ICE candidates, we can safely send the serializable candidate data
+            secondWindowRef.current.postMessage({
+              type: 'ice-candidate',
+              candidate: event.candidate ? {
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                candidate: event.candidate.candidate
+              } : null
+            }, '*')
+          }
+        }
+        
+        // Create and send offer
+        const offer = await peerConnection.createOffer()
+        await peerConnection.setLocalDescription(offer)
+        console.log('Created and set local description (offer):', offer.type)
+        
+        // Send offer to secondary window
+        if (secondWindowRef.current) {
+          // Convert the SessionDescription to a plain object before sending
+          const plainOffer = {
+            type: peerConnection.localDescription?.type,
+            sdp: peerConnection.localDescription?.sdp
+          }
           
-          // Toggle pause/play in the second window based on the primary video state
-          video.onpause = () => {
-            if (secondWindowRef.current) {
-              secondWindowRef.current.postMessage('pause', '*');
-              setIsPaused(true);
-            }
-          };
+          secondWindowRef.current.postMessage({
+            type: 'webrtc-offer',
+            offer: plainOffer
+          }, '*')
           
-          video.onplay = () => {
-            if (secondWindowRef.current) {
-              secondWindowRef.current.postMessage('play', '*');
-              setIsPaused(false);
-            }
-          };
+          setConnectionStatus('WebRTC offer sent, waiting for answer...')
         }
       } catch (error) {
-        console.error('Error capturing stream:', error)
-        setConnectionStatus(`Error capturing video: ${error instanceof Error ? error.message : String(error)}`)
+        console.error('Error setting up WebRTC:', error)
+        setConnectionStatus(`WebRTC setup error: ${error instanceof Error ? error.message : String(error)}`)
       }
     } catch (error) {
-      console.error('Error setting up streaming:', error)
+      console.error('Error in WebRTC setup:', error)
       setConnectionStatus(`Error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-
-  // Toggle pause/play in the second window
+  
+  // Toggle video pause
   const togglePause = () => {
-    if (secondWindowRef.current) {
-      if (isPaused) {
-        secondWindowRef.current.postMessage('play', '*');
-        if (videoRef.current) videoRef.current.play();
-      } else {
-        secondWindowRef.current.postMessage('pause', '*');
-        if (videoRef.current) videoRef.current.pause();
+    if (!videoRef.current) return
+    
+    if (videoRef.current.paused) {
+      videoRef.current.play()
+      setIsPaused(false)
+      
+      // Notify secondary window
+      if (secondWindowRef.current && !secondWindowRef.current.closed) {
+        secondWindowRef.current.postMessage('play', '*')
       }
-      setIsPaused(!isPaused);
     } else {
-      console.warn('Second window not available')
-      setConnectionStatus('Cannot control playback: second window not open')
+      videoRef.current.pause()
+      setIsPaused(true)
+      
+      // Notify secondary window
+      if (secondWindowRef.current && !secondWindowRef.current.closed) {
+        secondWindowRef.current.postMessage('pause', '*')
+      }
     }
   }
-
+  
   // Clean up on component unmount
   useEffect(() => {
     return () => {
       closeSecondWindow()
-      cleanup()
     }
-  }, [closeSecondWindow, cleanup])
-
+  }, [closeSecondWindow])
+  
   return (
-    <>
-      <div className="video-container">
-        <video 
-          ref={videoRef} 
-          src="/winter.mp4" 
-          autoPlay 
-          loop 
-          muted 
-          controls
-        />
-      </div>
+    <div className="video-container primary">
+      <h1>Video Sharing with WebRTC</h1>
+      <video 
+        ref={videoRef}
+        controls
+        src="/winter.mp4"
+        playsInline
+        muted
+        loop
+        aria-label="Primary video player"
+      />
       
       <div className="controls">
-        <button type="button" onClick={openSecondWindow} disabled={isSecondWindowOpen}>
-          {isSecondWindowOpen ? 'Second Window Open' : 'Open Second Window'}
+        <button 
+          type="button"
+          onClick={openSecondWindow} 
+          disabled={isSecondWindowOpen}
+        >
+          Open Secondary Window
         </button>
         
-        {isSecondWindowOpen && (
-          <>
-            <button type="button" onClick={togglePause}>
-              {isPaused ? 'Resume in Second Window' : 'Pause in Second Window'}
-            </button>
-            <button type="button" onClick={closeSecondWindow}>Close Second Window</button>
-          </>
-        )}
+        <button 
+          type="button"
+          onClick={closeSecondWindow}
+          disabled={!isSecondWindowOpen}
+        >
+          Close Secondary Window
+        </button>
+        
+        <button 
+          type="button"
+          onClick={togglePause}
+        >
+          {isPaused ? 'Play' : 'Pause'}
+        </button>
       </div>
       
       {connectionStatus && (
         <div className="connection-status">
-          Primary Status: {connectionStatus}
+          Status: {connectionStatus}
         </div>
       )}
-    </>
+    </div>
   )
 }
 
