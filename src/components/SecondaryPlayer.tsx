@@ -4,7 +4,10 @@ const SecondaryPlayer = () => {
   const [connectionStatus, setConnectionStatus] = useState('Initializing...')
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const oldUrlsRef = useRef<string[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+  
+  // Keep track of any URLs to clean up
+  const urlsToCleanupRef = useRef<string[]>([])
 
   useEffect(() => {
     console.log('Secondary player initializing...')
@@ -26,18 +29,34 @@ const SecondaryPlayer = () => {
     window.addEventListener('beforeunload', () => {
       window.opener?.postMessage('windowClosed', '*')
       
-      // Clean up any blob URLs to avoid memory leaks
-      for (const url of oldUrlsRef.current) {
-        URL.revokeObjectURL(url)
-      }
+      // Clean up any blob URLs and streams
+      cleanupResources();
     })
+
+    // Clean up all resources
+    const cleanupResources = () => {
+      // Revoke any blob URLs we created
+      for (const url of urlsToCleanupRef.current) {
+        URL.revokeObjectURL(url);
+      }
+      urlsToCleanupRef.current = [];
+
+      // Stop any tracks in our stream
+      if (streamRef.current) {
+        const tracks = streamRef.current.getTracks();
+        for (const track of tracks) {
+          track.stop();
+        }
+        streamRef.current = null;
+      }
+    };
 
     // Handle messages from the primary window
     const handleMessage = (event: MessageEvent) => {
       // Make sure the message is from our opener
       if (event.source !== window.opener) return
       
-      console.log('Received message from primary window:', typeof event.data)
+      console.log('Received message from primary window:', typeof event.data, event.data?.type || event.data)
       
       if (event.data === 'play') {
         if (videoRef.current?.paused) {
@@ -50,32 +69,50 @@ const SecondaryPlayer = () => {
         if (videoRef.current?.paused === false) {
           videoRef.current.pause()
         }
-      } else if (typeof event.data === 'object' && event.data.type === 'videoChunk') {
-        // Received a new video blob URL
-        const { url, autoPlay } = event.data
-        
-        console.log('Received video chunk URL', `${url.substring(0, 30)}...`)
-        setConnectionStatus('Received video chunk')
-        
-        // Set the new video URL
-        setVideoUrl(url)
-        
-        // Store this URL so we can revoke it later
-        oldUrlsRef.current.push(url)
-        
-        // Clean up old URLs if we have too many (keep last 10)
-        if (oldUrlsRef.current.length > 10) {
-          const urlToRevoke = oldUrlsRef.current.shift()
-          if (urlToRevoke) {
-            URL.revokeObjectURL(urlToRevoke)
+      } else if (typeof event.data === 'object') {
+        if (event.data.type === 'videoSource') {
+          // Store URL for cleanup
+          urlsToCleanupRef.current.push(event.data.url);
+          setVideoUrl(event.data.url);
+          setConnectionStatus('Received video source, waiting for streams...');
+        } 
+        else if (event.data.type === 'streamReady') {
+          setConnectionStatus(`Stream ready with ${event.data.tracks} tracks`);
+        }
+        else if (event.data.type === 'streamData') {
+          // Handle received media stream
+          if (event.data.stream && videoRef.current) {
+            try {
+              // Save the stream for cleanup
+              streamRef.current = event.data.stream;
+              
+              // Set the stream as the video source
+              videoRef.current.srcObject = event.data.stream;
+              videoRef.current.play().catch(err => {
+                console.error('Error playing stream:', err);
+                setConnectionStatus(`Stream playback error: ${err.message}`);
+              });
+              
+              setConnectionStatus('Received media stream, playing...');
+            } catch (err) {
+              console.error('Error setting stream:', err);
+              setConnectionStatus(`Error setting stream: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
         }
-        
-        // Play the video if needed
-        if (autoPlay && videoRef.current) {
-          videoRef.current.play().catch(err => {
-            console.error('Error auto-playing video:', err)
-          })
+        else if (event.data.type === 'fallbackVideo') {
+          // Use the original video URL as fallback
+          setConnectionStatus('Using fallback: direct video URL');
+          setVideoUrl(event.data.sourceUrl);
+          
+          // Try to play the video
+          if (videoRef.current) {
+            videoRef.current.oncanplay = () => {
+              videoRef.current?.play().catch((err: Error) => {
+                console.error('Error playing fallback video:', err);
+              });
+            };
+          }
         }
       }
     }
@@ -88,11 +125,7 @@ const SecondaryPlayer = () => {
     // Clean up on component unmount
     return () => {
       window.removeEventListener('message', handleMessage)
-      
-      // Clean up any blob URLs to avoid memory leaks
-      for (const url of oldUrlsRef.current) {
-        URL.revokeObjectURL(url)
-      }
+      cleanupResources();
     }
   }, [])
 

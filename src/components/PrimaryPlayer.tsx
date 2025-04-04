@@ -17,17 +17,9 @@ const PrimaryPlayer = () => {
   const secondWindowRef = useRef<Window | null>(null)
   const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const recorderRef = useRef<MediaRecorder | null>(null)
 
   // Clean up resources
   const cleanup = useCallback(() => {
-    if (recorderRef.current) {
-      if (recorderRef.current.state !== 'inactive') {
-        recorderRef.current.stop();
-      }
-      recorderRef.current = null;
-    }
-
     // Stop all tracks in the stream
     if (streamRef.current) {
       const tracks = streamRef.current.getTracks();
@@ -192,52 +184,99 @@ const PrimaryPlayer = () => {
           setConnectionStatus('Error: No video tracks available')
           return
         }
-
-        // Set up MediaRecorder to record the stream
-        const recorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp8,opus'
-        });
         
-        recorderRef.current = recorder;
+        // Create a video source that will be served to the secondary window
+        const mediaSource = new MediaSource();
+        const videoUrl = URL.createObjectURL(mediaSource);
         
-        recorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && secondWindowRef.current) {
-            // Create a blob URL from the recorded chunk
-            const blob = new Blob([event.data], { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            
-            // Send the URL to the second window
-            secondWindowRef.current.postMessage({ 
-              type: 'videoChunk', 
-              url: url,
-              autoPlay: !isPaused
+        // Tell the second window about the source object URL
+        if (secondWindowRef.current) {
+          secondWindowRef.current.postMessage({
+            type: 'videoSource',
+            url: videoUrl
+          }, '*');
+          
+          setConnectionStatus('Video source created, waiting for streams to start...');
+          
+          // Setup direct stream transmission
+          // Since MediaSource API is complex for live streaming,
+          // let's use a simpler approach: clone and directly inject the video element
+          
+          // Get the original video element's dimensions
+          const { videoWidth, videoHeight } = video;
+          
+          // Create a canvas to render video frames
+          const canvas = document.createElement('canvas');
+          canvas.width = videoWidth || 640;
+          canvas.height = videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          
+          // Create a direct stream from the canvas
+          const canvasStream = canvas.captureStream(30); // 30fps
+          
+          // Send the stream tracks to the second window
+          if (canvasStream.getTracks().length > 0) {
+            // Let the secondary window know we have the stream ready
+            secondWindowRef.current.postMessage({
+              type: 'streamReady',
+              tracks: canvasStream.getTracks().length
             }, '*');
+            
+            // Animation function to continuously draw the video to canvas
+            const drawVideoFrame = () => {
+              if (!secondWindowRef.current || secondWindowRef.current.closed) {
+                return; // Stop if window closed
+              }
+              
+              if (video.readyState >= 2 && ctx) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              }
+              
+              requestAnimationFrame(drawVideoFrame);
+            };
+            
+            // Start drawing frames
+            drawVideoFrame();
+            
+            // Send the canvas stream directly
+            const streamData = {
+              type: 'streamData',
+              stream: canvasStream // This will be cloned properly by the browser
+            };
+            
+            try {
+              // Transfer the stream to the secondary window
+              // Note: This works in same-origin contexts and requires browser support
+              secondWindowRef.current.postMessage(streamData, '*', [canvasStream]);
+              setConnectionStatus('Stream sent to second window!');
+            } catch (err) {
+              console.error('Error transferring stream:', err);
+              
+              // Fall back to simpler approach - send the video source URL
+              secondWindowRef.current.postMessage({
+                type: 'fallbackVideo',
+                sourceUrl: video.src
+              }, '*');
+              
+              setConnectionStatus('Using fallback mode: sending video URL');
+            }
           }
-        };
-        
-        recorder.onstop = () => {
-          setConnectionStatus('Recording stopped');
-        };
-        
-        // Start recording, producing chunks every 500ms
-        recorder.start(500);
-        setConnectionStatus('Streaming video to second window...');
-        
-        // Toggle pause/play in the second window based on the primary video state
-        video.onpause = () => {
-          if (secondWindowRef.current) {
-            secondWindowRef.current.postMessage('pause', '*');
-            setIsPaused(true);
-          }
-        };
-        
-        video.onplay = () => {
-          if (secondWindowRef.current) {
-            secondWindowRef.current.postMessage('play', '*');
-            setIsPaused(false);
-          }
-        };
-        
+          
+          // Toggle pause/play in the second window based on the primary video state
+          video.onpause = () => {
+            if (secondWindowRef.current) {
+              secondWindowRef.current.postMessage('pause', '*');
+              setIsPaused(true);
+            }
+          };
+          
+          video.onplay = () => {
+            if (secondWindowRef.current) {
+              secondWindowRef.current.postMessage('play', '*');
+              setIsPaused(false);
+            }
+          };
+        }
       } catch (error) {
         console.error('Error capturing stream:', error)
         setConnectionStatus(`Error capturing video: ${error instanceof Error ? error.message : String(error)}`)
