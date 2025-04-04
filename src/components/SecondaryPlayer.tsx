@@ -129,6 +129,31 @@ const SecondaryPlayer = () => {
     }
   }, [])
 
+  // Set up video ended event handler separately to properly handle ref
+  useEffect(() => {
+    // Handle video ended event to loop the video
+    const handleVideoEnded = () => {
+      console.log('Video ended, restarting playback');
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+        videoRef.current.play().catch(err => {
+          console.error('Error restarting video:', err);
+        });
+      }
+    };
+    
+    // Add ended event listener if video element exists
+    const videoElement = videoRef.current;
+    if (videoElement) {
+      videoElement.addEventListener('ended', handleVideoEnded);
+      
+      // Remove ended event listener on cleanup
+      return () => {
+        videoElement.removeEventListener('ended', handleVideoEnded);
+      };
+    }
+  }, []); // Empty dependency array since we're using ref.current inside
+
   // Handle video error
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
     console.error('Video error:', e)
@@ -166,6 +191,7 @@ const SecondaryPlayer = () => {
         playsInline
         controls
         muted
+        loop
         onError={handleVideoError}
         onPlay={handleVideoPlay}
         aria-label="Received video stream from primary window"
