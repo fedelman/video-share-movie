@@ -2,9 +2,9 @@ import { useRef, useEffect, useState } from 'react'
 
 const SecondaryPlayer = () => {
   const [connectionStatus, setConnectionStatus] = useState('Initializing...')
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-  const pendingCandidatesRef = useRef<RTCIceCandidate[]>([])
+  const oldUrlsRef = useRef<string[]>([])
 
   useEffect(() => {
     console.log('Secondary player initializing...')
@@ -15,7 +15,7 @@ const SecondaryPlayer = () => {
       if (window.opener) {
         console.log('Signaling ready to parent window')
         window.opener.postMessage('windowReady', '*')
-        setConnectionStatus('Ready signal sent, waiting for offer...')
+        setConnectionStatus('Ready signal sent, waiting for video...')
       } else {
         console.error('No opener window found')
         setConnectionStatus('Error: No opener window found')
@@ -24,261 +24,92 @@ const SecondaryPlayer = () => {
 
     // Send message to opener when this window is closed
     window.addEventListener('beforeunload', () => {
-      if (window.opener) {
-        window.opener.postMessage('windowClosed', '*')
+      window.opener?.postMessage('windowClosed', '*')
+      
+      // Clean up any blob URLs to avoid memory leaks
+      for (const url of oldUrlsRef.current) {
+        URL.revokeObjectURL(url)
       }
     })
 
-    // Handle an ICE candidate from the primary window
-    const handleIceCandidate = async (candidateData: RTCIceCandidateInit) => {
-      try {
-        const candidate = new RTCIceCandidate(candidateData)
-        
-        if (peerConnectionRef.current?.remoteDescription) {
-          // If we already have a remote description, add the candidate immediately
-          await peerConnectionRef.current.addIceCandidate(candidate)
-          console.log('Added ICE candidate')
-        } else {
-          // Otherwise, queue the candidate to be added later
-          pendingCandidatesRef.current.push(candidate)
-          console.log('Queued ICE candidate for later')
+    // Handle messages from the primary window
+    const handleMessage = (event: MessageEvent) => {
+      // Make sure the message is from our opener
+      if (event.source !== window.opener) return
+      
+      console.log('Received message from primary window:', typeof event.data)
+      
+      if (event.data === 'play') {
+        if (videoRef.current?.paused) {
+          videoRef.current.play().catch(err => {
+            console.error('Error playing video:', err)
+            setConnectionStatus(`Manual play error: ${err.message}`)
+          })
         }
-      } catch (error) {
-        console.error('Error handling ICE candidate:', error)
+      } else if (event.data === 'pause') {
+        if (videoRef.current?.paused === false) {
+          videoRef.current.pause()
+        }
+      } else if (typeof event.data === 'object' && event.data.type === 'videoChunk') {
+        // Received a new video blob URL
+        const { url, autoPlay } = event.data
+        
+        console.log('Received video chunk URL', `${url.substring(0, 30)}...`)
+        setConnectionStatus('Received video chunk')
+        
+        // Set the new video URL
+        setVideoUrl(url)
+        
+        // Store this URL so we can revoke it later
+        oldUrlsRef.current.push(url)
+        
+        // Clean up old URLs if we have too many (keep last 10)
+        if (oldUrlsRef.current.length > 10) {
+          const urlToRevoke = oldUrlsRef.current.shift()
+          if (urlToRevoke) {
+            URL.revokeObjectURL(urlToRevoke)
+          }
+        }
+        
+        // Play the video if needed
+        if (autoPlay && videoRef.current) {
+          videoRef.current.play().catch(err => {
+            console.error('Error auto-playing video:', err)
+          })
+        }
       }
     }
-
-    // Set up the WebRTC receiver
-    const setupReceiver = () => {
-      // Handle messages from the primary window
-      window.addEventListener('message', async (event) => {
-        // Make sure the message is from our opener
-        if (event.source !== window.opener) return
-        
-        console.log('Received message from primary window:', event.data)
-
-        if (event.data.type === 'offer') {
-          try {
-            console.log('Received offer, setting up peer connection')
-            setConnectionStatus('Offer received, setting up connection...')
-            
-            // Create a new peer connection with better STUN/TURN servers
-            const peerConnection = new RTCPeerConnection({
-              iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
-              ],
-              iceCandidatePoolSize: 10
-            })
-            
-            peerConnectionRef.current = peerConnection
-            
-            // Debug events
-            peerConnection.onicecandidate = (event) => {
-              console.log('ICE candidate (secondary):', event.candidate)
-              
-              if (event.candidate && window.opener) {
-                // Send the ICE candidate back to the primary window
-                window.opener.postMessage({
-                  type: 'ice-candidate',
-                  candidate: {
-                    sdpMLineIndex: event.candidate.sdpMLineIndex,
-                    sdpMid: event.candidate.sdpMid,
-                    candidate: event.candidate.candidate
-                  }
-                }, '*')
-              }
-            }
-            
-            peerConnection.oniceconnectionstatechange = () => {
-              const state = peerConnection.iceConnectionState
-              console.log('ICE connection state (secondary):', state)
-              setConnectionStatus(`ICE connection: ${state}`)
-              
-              if (state === 'connected' || state === 'completed') {
-                setConnectionStatus('Connected! Receiving video stream...')
-              } else if (state === 'failed') {
-                setConnectionStatus('Connection failed. Try refreshing the page.')
-                console.error('ICE connection failed')
-              } else if (state === 'disconnected') {
-                setConnectionStatus('Connection disconnected. Attempting to reconnect...')
-              }
-            }
-
-            // Log additional connection state information
-            peerConnection.onconnectionstatechange = () => {
-              console.log('Connection state:', peerConnection.connectionState)
-              
-              if (peerConnection.connectionState === 'failed') {
-                setConnectionStatus('Connection failed. Please refresh both windows.')
-              }
-            }
-
-            peerConnection.onsignalingstatechange = () => {
-              console.log('Signaling state:', peerConnection.signalingState)
-            }
-            
-            // Set up data channel for commands
-            peerConnection.ondatachannel = (event) => {
-              const dataChannel = event.channel
-              console.log('Data channel received:', dataChannel.label)
-              
-              dataChannel.onopen = () => {
-                console.log('Data channel opened (secondary)')
-                setConnectionStatus('Control channel opened')
-              }
-              
-              dataChannel.onmessage = (e) => {
-                console.log('Command received:', e.data)
-                if (e.data === 'pause' && videoRef.current) {
-                  videoRef.current.pause()
-                } else if (e.data === 'play' && videoRef.current) {
-                  videoRef.current.play().catch(error => {
-                    console.error('Error playing video:', error)
-                  })
-                }
-              }
-              
-              dataChannel.onerror = (error) => {
-                console.error('Data channel error (secondary):', error)
-                setConnectionStatus('Data channel error. Check console for details.')
-              }
-
-              dataChannel.onclose = () => {
-                console.log('Data channel closed')
-                setConnectionStatus('Control channel closed')
-              }
-            }
-            
-            // Set up video stream handling
-            peerConnection.ontrack = (event) => {
-              console.log('Track received:', event.track.kind, event.track)
-              
-              if (!videoRef.current) {
-                console.error('Video element not found')
-                setConnectionStatus('Error: Video element not found')
-                return
-              }
-              
-              if (event.streams?.[0]) {
-                const stream = event.streams[0]
-                console.log('Setting video source to received stream with tracks:', 
-                  stream.getTracks().map(t => t.kind).join(', '))
-                
-                // Make sure we're using the latest stream
-                videoRef.current.srcObject = null
-                videoRef.current.srcObject = stream
-                
-                // Attempt to play the video immediately
-                videoRef.current.play()
-                  .then(() => {
-                    console.log('Video playback started successfully')
-                    setConnectionStatus('Video stream playing')
-                  })
-                  .catch(err => {
-                    console.error('Error playing video:', err)
-                    setConnectionStatus(`Error playing video: ${err.message}. Try clicking the manual play button.`)
-                  })
-                
-                // Monitor track state
-                const tracks = stream.getTracks()
-                for (const track of tracks) {
-                  console.log(`Track ${track.id} initial state:`, { 
-                    kind: track.kind, 
-                    enabled: track.enabled, 
-                    muted: track.muted,
-                    readyState: track.readyState 
-                  })
-                  
-                  track.onmute = () => {
-                    console.warn('Track muted:', track.kind)
-                    setConnectionStatus('Video track muted. Stream may be paused.')
-                  }
-                  
-                  track.onunmute = () => {
-                    console.log('Track unmuted:', track.kind)
-                    setConnectionStatus('Video track active')
-                  }
-                  
-                  track.onended = () => {
-                    console.warn('Track ended:', track.kind)
-                    setConnectionStatus('Video track ended. Try refreshing.')
-                  }
-                }
-              } else {
-                console.error('No streams available in track event')
-                setConnectionStatus('Error: No streams available in track event')
-              }
-            }
-            
-            setConnectionStatus('Setting up connection...')
-            
-            // Accept the offer and create an answer
-            await peerConnection.setRemoteDescription(event.data.offer)
-            console.log('Remote description set')
-            
-            // Add any pending ICE candidates
-            for (const candidate of pendingCandidatesRef.current) {
-              try {
-                await peerConnection.addIceCandidate(candidate)
-                console.log('Added pending ICE candidate')
-              } catch (error) {
-                console.error('Error adding pending ICE candidate:', error)
-              }
-            }
-            
-            // Clear the queue
-            pendingCandidatesRef.current = []
-            
-            // Create and send answer
-            const answer = await peerConnection.createAnswer()
-            await peerConnection.setLocalDescription(answer)
-            console.log('Created and set local answer')
-            
-            // Convert the RTCSessionDescription to a plain object before sending
-            // This avoids the DataCloneError when using postMessage
-            const plainAnswer = {
-              type: peerConnection.localDescription?.type,
-              sdp: peerConnection.localDescription?.sdp
-            }
-            
-            // Send the answer back to the primary window
-            window.opener?.postMessage({
-              type: 'answer',
-              answer: plainAnswer
-            }, '*')
-            console.log('Sent answer to primary window')
-            setConnectionStatus('Answer sent, establishing connection...')
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error)
-            console.error('Error setting up WebRTC receiver:', error)
-            setConnectionStatus(`Error setting up connection: ${errorMessage}`)
-          }
-        } else if (event.data.type === 'ice-candidate') {
-          // Handle incoming ICE candidates
-          await handleIceCandidate(event.data.candidate)
-        }
-      })
-    }
     
-    // Set everything up
-    setupReceiver()
+    window.addEventListener('message', handleMessage)
     
     // Signal ready to the parent window after a short delay to ensure everything is loaded
     setTimeout(signalReady, 500)
     
     // Clean up on component unmount
     return () => {
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close()
+      window.removeEventListener('message', handleMessage)
+      
+      // Clean up any blob URLs to avoid memory leaks
+      for (const url of oldUrlsRef.current) {
+        URL.revokeObjectURL(url)
       }
     }
   }, [])
 
+  // Handle video error
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error('Video error:', e)
+    setConnectionStatus('Video error occurred. Check console for details.')
+  }
+
+  // Handle video success
+  const handleVideoPlay = () => {
+    setConnectionStatus('Video playing')
+  }
+
   const handleTestPlayback = () => {
     if (videoRef.current) {
-      if (videoRef.current.paused) {
+      if (videoRef.current?.paused) {
         videoRef.current.play().catch(err => {
           console.error('Error playing video:', err)
           setConnectionStatus(`Manual play error: ${err.message}`)
@@ -297,14 +128,15 @@ const SecondaryPlayer = () => {
       </div>
       <video 
         ref={videoRef} 
+        src={videoUrl || undefined}
         autoPlay 
         playsInline
         controls
         muted
+        onError={handleVideoError}
+        onPlay={handleVideoPlay}
         aria-label="Received video stream from primary window"
-      >
-        {/* Track element removed to fix empty src warning */}
-      </video>
+      />
       
       {/* Add a manual play button for debugging */}
       <button type="button" onClick={handleTestPlayback} className="test-button">
