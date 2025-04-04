@@ -38,6 +38,15 @@
   min-height: 300px;
 }
 
+.test-button {
+  margin-top: 15px;
+  background-color: #ff5722;
+}
+
+.test-button:hover {
+  background-color: #e64a19;
+}
+
 .connection-status {
   margin: 10px 0 20px;
   padding: 10px;
