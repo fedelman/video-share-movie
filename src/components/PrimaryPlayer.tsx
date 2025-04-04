@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 declare global {
   interface HTMLVideoElement {
     captureStream(): MediaStream;
+    // For Firefox compatibility
+    mozCaptureStream(): MediaStream;
   }
 }
 
@@ -17,6 +19,7 @@ const PrimaryPlayer = () => {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(null)
   const pendingCandidatesRef = useRef<RTCIceCandidate[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
 
   // Clean up WebRTC connection
   const cleanupConnection = useCallback(() => {
@@ -28,6 +31,15 @@ const PrimaryPlayer = () => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close()
       peerConnectionRef.current = null
+    }
+
+    // Stop all tracks in the stream
+    if (streamRef.current) {
+      const tracks = streamRef.current.getTracks();
+      for (const track of tracks) {
+        track.stop();
+      }
+      streamRef.current = null;
     }
 
     // Clear pending candidates
@@ -133,11 +145,25 @@ const PrimaryPlayer = () => {
         setConnectionStatus('Data channel closed')
       }
       
-      // Create offer
-      const offer = await peerConnection.createOffer({
+      // Create offer with explicit video codec preferences for better compatibility
+      const offerOptions: RTCOfferOptions = {
         offerToReceiveAudio: false,
         offerToReceiveVideo: false
-      })
+      }
+      
+      const offer = await peerConnection.createOffer(offerOptions)
+      
+      // Prefer VP8 codec in the SDP for better compatibility
+      let modifiedSdp = offer.sdp;
+      if (modifiedSdp) {
+        // Add VP8 as first codec
+        modifiedSdp = modifiedSdp.replace(/m=video .*\r\n/g, (line) => {
+          return `${line}a=rtpmap:96 VP8/90000\r\na=rtcp-fb:96 nack\r\na=rtcp-fb:96 nack pli\r\na=rtcp-fb:96 ccm fir\r\n`;
+        });
+        
+        // Modify the offer with our preferred codec
+        offer.sdp = modifiedSdp;
+      }
       
       await peerConnection.setLocalDescription(offer)
       
@@ -203,6 +229,29 @@ const PrimaryPlayer = () => {
     } catch (error) {
       console.error('Error handling ICE candidate:', error)
     }
+  }
+
+  // Capture video stream with cross-browser support
+  const captureVideoStream = (video: HTMLVideoElement): MediaStream => {
+    let stream: MediaStream;
+    
+    // Try regular captureStream first
+    if (typeof video.captureStream === 'function') {
+      stream = video.captureStream();
+    }
+    // Then try Firefox's mozCaptureStream
+    else if (typeof video.mozCaptureStream === 'function') {
+      stream = video.mozCaptureStream();
+    }
+    // If neither is available, throw an error
+    else {
+      throw new Error('Video capture not supported in this browser');
+    }
+    
+    // Store the stream reference for cleanup
+    streamRef.current = stream;
+    
+    return stream;
   }
 
   // Open a new window and establish WebRTC connection
@@ -307,14 +356,25 @@ const PrimaryPlayer = () => {
           await video.play()
         }
         
-        // Capture the video stream
-        const stream = video.captureStream()
+        // Capture the video stream with cross-browser support
+        const stream = captureVideoStream(video);
         console.log('Captured stream with tracks:', stream.getTracks().length)
         
         if (stream.getTracks().length === 0) {
           console.error('No tracks in captured stream')
           setConnectionStatus('Error: No video tracks available')
           return
+        }
+        
+        // Log track information
+        const tracks = stream.getTracks()
+        for (const track of tracks) {
+          console.log(`Track ${track.id} info:`, {
+            kind: track.kind,
+            enabled: track.enabled,
+            muted: track.muted,
+            readyState: track.readyState
+          });
         }
         
         // Add tracks to the peer connection

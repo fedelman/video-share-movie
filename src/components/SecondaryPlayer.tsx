@@ -154,7 +154,14 @@ const SecondaryPlayer = () => {
             // Set up video stream handling
             peerConnection.ontrack = (event) => {
               console.log('Track received:', event.track.kind, event.track)
-              if (videoRef.current && event.streams && event.streams[0]) {
+              
+              if (!videoRef.current) {
+                console.error('Video element not found')
+                setConnectionStatus('Error: Video element not found')
+                return
+              }
+              
+              if (event.streams?.[0]) {
                 const stream = event.streams[0]
                 console.log('Setting video source to received stream with tracks:', 
                   stream.getTracks().map(t => t.kind).join(', '))
@@ -163,30 +170,45 @@ const SecondaryPlayer = () => {
                 videoRef.current.srcObject = null
                 videoRef.current.srcObject = stream
                 
-                // Listen for the loadedmetadata event to make sure the video is ready
-                videoRef.current.onloadedmetadata = () => {
-                  console.log('Video metadata loaded, attempting to play')
-                  
-                  // Attempt to play the video
-                  videoRef.current?.play().catch(err => {
-                    console.error('Error playing video:', err)
-                    setConnectionStatus(`Error playing video: ${err.message}`)
+                // Attempt to play the video immediately
+                videoRef.current.play()
+                  .then(() => {
+                    console.log('Video playback started successfully')
+                    setConnectionStatus('Video stream playing')
                   })
-                }
+                  .catch(err => {
+                    console.error('Error playing video:', err)
+                    setConnectionStatus(`Error playing video: ${err.message}. Try clicking the manual play button.`)
+                  })
                 
-                // Also check if the tracks are actually flowing data
+                // Monitor track state
                 const tracks = stream.getTracks()
                 for (const track of tracks) {
-                  if (track.muted) {
-                    console.warn('Track is muted:', track.kind)
+                  console.log(`Track ${track.id} initial state:`, { 
+                    kind: track.kind, 
+                    enabled: track.enabled, 
+                    muted: track.muted,
+                    readyState: track.readyState 
+                  })
+                  
+                  track.onmute = () => {
+                    console.warn('Track muted:', track.kind)
+                    setConnectionStatus('Video track muted. Stream may be paused.')
                   }
-                  track.onmute = () => console.warn('Track muted:', track.kind)
-                  track.onunmute = () => console.log('Track unmuted:', track.kind)
-                  track.onended = () => console.warn('Track ended:', track.kind)
+                  
+                  track.onunmute = () => {
+                    console.log('Track unmuted:', track.kind)
+                    setConnectionStatus('Video track active')
+                  }
+                  
+                  track.onended = () => {
+                    console.warn('Track ended:', track.kind)
+                    setConnectionStatus('Video track ended. Try refreshing.')
+                  }
                 }
               } else {
-                console.error('Video element or stream not available')
-                setConnectionStatus('Error: Video element or stream not available')
+                console.error('No streams available in track event')
+                setConnectionStatus('Error: No streams available in track event')
               }
             }
             
@@ -222,7 +244,7 @@ const SecondaryPlayer = () => {
             }
             
             // Send the answer back to the primary window
-            window.opener.postMessage({
+            window.opener?.postMessage({
               type: 'answer',
               answer: plainAnswer
             }, '*')
@@ -281,7 +303,7 @@ const SecondaryPlayer = () => {
         muted
         aria-label="Received video stream from primary window"
       >
-        <track kind="captions" src="" label="English" />
+        {/* Track element removed to fix empty src warning */}
       </video>
       
       {/* Add a manual play button for debugging */}
@@ -294,4 +316,4 @@ const SecondaryPlayer = () => {
   )
 }
 
-export default SecondaryPlayer 
+export default SecondaryPlayer
