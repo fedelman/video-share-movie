@@ -1,15 +1,13 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 
 const SecondaryPlayer = () => {
-  console.log('SecondaryPlayer component initializing')
-  const [connectionStatus, updateConnectionStatus] = useState('Initializing...')
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
-  // Keep track of any URLs to clean up
-  const urlsToCleanupRef = useRef<string[]>([])
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+
+  const [connectionStatus, updateConnectionStatus] = useState('Initializing...')
 
   // Keep track of pending ICE candidates until peer connection is ready
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([])
@@ -22,50 +20,6 @@ const SecondaryPlayer = () => {
   useEffect(() => {
     console.log('Secondary player initializing...')
     setConnectionStatus('Waiting for connection from primary window...')
-
-    // Signal to the opener that this window is ready to receive connections
-    const signalReady = () => {
-      if (window.opener) {
-        console.log('Signaling ready to parent window')
-        window.opener.postMessage('windowReady', '*')
-        setConnectionStatus('Ready signal sent, waiting for video...')
-      } else {
-        console.error('No opener window found')
-        setConnectionStatus('Error: No opener window found')
-      }
-    }
-
-    // Send message to opener when this window is closed
-    window.addEventListener('beforeunload', () => {
-      window.opener?.postMessage('windowClosed', '*')
-
-      // Clean up any blob URLs and streams
-      cleanupResources()
-    })
-
-    // Clean up all resources
-    const cleanupResources = () => {
-      // Close peer connection
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close()
-        peerConnectionRef.current = null
-      }
-
-      // Revoke any blob URLs we created
-      for (const url of urlsToCleanupRef.current) {
-        URL.revokeObjectURL(url)
-      }
-      urlsToCleanupRef.current = []
-
-      // Stop any tracks in our stream
-      if (streamRef.current) {
-        const tracks = streamRef.current.getTracks()
-        for (const track of tracks) {
-          track.stop()
-        }
-        streamRef.current = null
-      }
-    }
 
     // Create and initialize WebRTC peer connection
     const createPeerConnection = () => {
@@ -322,58 +276,72 @@ const SecondaryPlayer = () => {
         }
       }
     }
-
     window.addEventListener('message', handleMessage)
+
+    // Clean up all resources
+    const cleanupResources = () => {
+      // Close peer connection
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close()
+        peerConnectionRef.current = null
+      }
+
+      // Stop any tracks in our stream
+      if (streamRef.current) {
+        const tracks = streamRef.current.getTracks()
+        for (const track of tracks) {
+          track.stop()
+        }
+        streamRef.current = null
+      }
+    }
+
+    const handleBeforeUnload = () => {
+      window.opener?.postMessage('windowClosed', '*')
+    }
+
+    // Send message to opener when this window is closed
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    // Signal to the opener that this window is ready to receive connections
+    const signalReady = () => {
+      if (window.opener) {
+        console.log('Signaling ready to parent window')
+        window.opener.postMessage('windowReady', '*')
+        setConnectionStatus('Ready signal sent, waiting for video...')
+      } else {
+        console.error('No opener window found')
+        setConnectionStatus('Error: No opener window found')
+      }
+    }
 
     // Signal ready to the parent window after a short delay to ensure everything is loaded
     setTimeout(signalReady, 500)
 
     // Clean up on component unmount
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
       window.removeEventListener('message', handleMessage)
+
       cleanupResources()
     }
   }, [setConnectionStatus])
 
-  // Set up video ended event handler separately to properly handle ref
-  useEffect(() => {
-    // Handle video ended event to loop the video
-    const handleVideoEnded = () => {
-      console.log('Video ended, restarting playback')
-      if (videoRef.current) {
-        videoRef.current.currentTime = 0
-        videoRef.current.play().catch((err) => {
-          console.error('Error restarting video:', err)
-        })
-      }
-    }
-
-    // Add ended event listener if video element exists
-    const videoElement = videoRef.current
-    if (videoElement) {
-      videoElement.addEventListener('ended', handleVideoEnded)
-
-      // Remove ended event listener on cleanup
-      return () => {
-        videoElement.removeEventListener('ended', handleVideoEnded)
-      }
-    }
-  }, []) // Empty dependency array since we're using ref.current inside
-
   // Handle video error
-  const handleVideoError = (
-    e: React.SyntheticEvent<HTMLVideoElement, Event>,
-  ) => {
-    console.error('Video error:', e)
-    setConnectionStatus('Video error occurred. Check console for details.')
-  }
+  const handleVideoError = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+      console.error('Video error:', e)
+      setConnectionStatus('Video error occurred. Check console for details.')
+    },
+    [setConnectionStatus],
+  )
 
   // Handle video success
-  const handleVideoPlay = () => {
+  const handleVideoPlay = useCallback(() => {
     setConnectionStatus('Video playing')
-  }
+  }, [setConnectionStatus])
 
-  const handleTestPlayback = () => {
+  const handleTestPlayback = useCallback(() => {
     if (videoRef.current) {
       if (videoRef.current?.paused) {
         videoRef.current.play().catch((err) => {
@@ -384,7 +352,7 @@ const SecondaryPlayer = () => {
         videoRef.current.pause()
       }
     }
-  }
+  }, [setConnectionStatus])
 
   return (
     <div className="video-container secondary">
@@ -403,11 +371,10 @@ const SecondaryPlayer = () => {
         aria-label="Received video stream from primary window"
       />
 
-      {/* Add a manual play button for debugging */}
       <button
         type="button"
         onClick={handleTestPlayback}
-        className="test-button"
+        className="video-play-pause-button"
       >
         Manual Play/Pause
       </button>
