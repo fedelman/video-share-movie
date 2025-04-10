@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
+import { DualScreenProvider } from './dual-screen/dual-screen-provider.tsx'
 
 const root = document.getElementById('root')
 if (!root) {
@@ -9,6 +10,8 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <DualScreenProvider>
+      <App />
+    </DualScreenProvider>
   </StrictMode>,
 )

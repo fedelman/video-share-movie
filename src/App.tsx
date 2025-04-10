@@ -1,20 +1,13 @@
 import './App.css'
 import PrimaryPlayer from './components/PrimaryPlayer'
 import SecondaryPlayer from './components/SecondaryPlayer'
-
-// Type augmentation moved to PrimaryPlayer component
+import { useDualScreen } from './dual-screen/dual-screen-provider'
 
 function App() {
-  // Check if this is the secondary window
-  const isSecondaryWindow = new URLSearchParams(window.location.search).get('secondary') === 'true'
-
+  const { isSecondaryScreen } = useDualScreen()
   return (
     <div className="app">
-      {isSecondaryWindow ? (
-        <SecondaryPlayer />
-      ) : (
-        <PrimaryPlayer />
-      )}
+      {isSecondaryScreen ? <SecondaryPlayer /> : <PrimaryPlayer />}
     </div>
   )
 }

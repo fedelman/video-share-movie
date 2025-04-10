@@ -1,25 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { captureVideoStream } from './captureVideoStream'
+import { useDualScreen } from '../dual-screen/dual-screen-provider'
 
 const PrimaryPlayer = () => {
   const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
   const secondWindowRef = useRef<Window | null>(null)
 
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-  const [connectionStatus, setConnectionStatus] = useState('')
   const [isPaused, setIsPaused] = useState(false)
   const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(
     null,
   )
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-
-  // Update connection status & log it to the console
-  const updateConnectionStatus = useCallback((status: string) => {
-    setConnectionStatus(status)
-    console.log('Updating connection status:', status)
-  }, [])
+  const { connectionStatus, updateConnectionStatus, videoRef, streamRef } =
+    useDualScreen()
 
   // Handle WebRTC answer from secondary window
   const handleWebRTCAnswer = useCallback(
@@ -63,21 +57,20 @@ const PrimaryPlayer = () => {
         updateConnectionStatus(
           `WebRTC error: ${error instanceof Error ? error.message : String(error)}`,
         )
-
-        // Try fallback on error
-        if (videoRef.current?.src && secondWindowRef.current) {
-          console.log('Error in WebRTC, sending fallback video URL')
-          secondWindowRef.current.postMessage(
-            {
-              type: 'fallbackVideo',
-              sourceUrl: videoRef.current.src,
-            },
-            '*',
-          )
-        }
+        // Send fallback fallback video URL if webRTC connection fails
+        // if (videoRef.current?.src && secondWindowRef.current) {
+        //   console.log('Error in WebRTC, sending fallback video URL')
+        //   secondWindowRef.current.postMessage(
+        //     {
+        //       type: 'fallbackVideo',
+        //       sourceUrl: videoRef.current.src,
+        //     },
+        //     '*',
+        //   )
+        // }
       }
     },
-    [updateConnectionStatus],
+    [updateConnectionStatus, videoRef],
   )
 
   // Handle ICE candidate from secondary window
@@ -259,7 +252,7 @@ const PrimaryPlayer = () => {
         `Error: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
-  }, [updateConnectionStatus])
+  }, [streamRef, updateConnectionStatus, videoRef])
 
   // Clean up resources
   const cleanup = useCallback(() => {
@@ -285,7 +278,7 @@ const PrimaryPlayer = () => {
     }
 
     updateConnectionStatus('')
-  }, [updateConnectionStatus])
+  }, [streamRef, updateConnectionStatus])
 
   // Open a new window to display the video
   const openSecondWindow = useCallback(async () => {
@@ -371,6 +364,7 @@ const PrimaryPlayer = () => {
     handleWebRTCAnswer,
     startWebRTCConnection,
     updateConnectionStatus,
+    videoRef,
   ])
 
   // Toggle video pause
@@ -394,7 +388,7 @@ const PrimaryPlayer = () => {
         secondWindowRef.current.postMessage('pause', '*')
       }
     }
-  }, [])
+  }, [videoRef])
 
   // Close the second window
   const closeSecondWindow = useCallback(() => {

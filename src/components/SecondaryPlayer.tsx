@@ -1,25 +1,19 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { useDualScreen } from '../dual-screen/dual-screen-provider'
 
 const SecondaryPlayer = () => {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
 
-  const [connectionStatus, updateConnectionStatus] = useState('Initializing...')
-
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   // Keep track of pending ICE candidates until peer connection is ready
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([])
 
-  const setConnectionStatus = useCallback((status: string) => {
-    console.log('Updating connection status:', status)
-    updateConnectionStatus(status)
-  }, [])
+  const { connectionStatus, updateConnectionStatus, videoRef, streamRef } =
+    useDualScreen()
 
   useEffect(() => {
     console.log('Secondary player initializing...')
-    setConnectionStatus('Waiting for connection from primary window...')
+    updateConnectionStatus('Waiting for connection from primary window...')
 
     // Create and initialize WebRTC peer connection
     const createPeerConnection = () => {
@@ -36,7 +30,7 @@ const SecondaryPlayer = () => {
           console.log(
             `Connection state changed: ${peerConnection.connectionState}`,
           )
-          setConnectionStatus(
+          updateConnectionStatus(
             `WebRTC connection: ${peerConnection.connectionState}`,
           )
         }
@@ -79,22 +73,22 @@ const SecondaryPlayer = () => {
             console.log('Setting video srcObject with remote stream')
             streamRef.current = event.streams[0]
             videoRef.current.srcObject = event.streams[0]
-            setConnectionStatus('WebRTC stream connected, playing video...')
+            updateConnectionStatus('WebRTC stream connected, playing video...')
 
             videoRef.current.play().catch((err) => {
               console.error('Error playing video:', err)
-              setConnectionStatus(`Error playing: ${err.message}`)
+              updateConnectionStatus(`Error playing: ${err.message}`)
             })
           } else {
             console.error('Missing video element or streams in ontrack event')
-            setConnectionStatus('Error: Failed to set video source')
+            updateConnectionStatus('Error: Failed to set video source')
           }
         }
 
         return peerConnection
       } catch (error) {
         console.error('Error creating peer connection:', error)
-        setConnectionStatus(
+        updateConnectionStatus(
           `WebRTC error: ${error instanceof Error ? error.message : String(error)}`,
         )
         return null
@@ -127,7 +121,7 @@ const SecondaryPlayer = () => {
         await peerConnection.setRemoteDescription(
           new RTCSessionDescription(offer),
         )
-        setConnectionStatus('Received WebRTC offer, creating answer...')
+        updateConnectionStatus('Received WebRTC offer, creating answer...')
 
         // Create answer
         console.log('Creating answer')
@@ -171,13 +165,13 @@ const SecondaryPlayer = () => {
             '*',
           )
 
-          setConnectionStatus('WebRTC answer sent, connecting...')
+          updateConnectionStatus('WebRTC answer sent, connecting...')
         } else {
           console.error('Cannot send answer - no opener window')
         }
       } catch (error) {
         console.error('Error handling WebRTC offer:', error)
-        setConnectionStatus(
+        updateConnectionStatus(
           `WebRTC error: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
@@ -198,7 +192,7 @@ const SecondaryPlayer = () => {
         if (videoRef.current?.paused) {
           videoRef.current.play().catch((err) => {
             console.error('Error playing video:', err)
-            setConnectionStatus(`Manual play error: ${err.message}`)
+            updateConnectionStatus(`Manual play error: ${err.message}`)
           })
         }
       } else if (event.data === 'pause') {
@@ -231,7 +225,7 @@ const SecondaryPlayer = () => {
               }
             } catch (err) {
               console.error('Error adding ICE candidate:', err)
-              setConnectionStatus(
+              updateConnectionStatus(
                 `ICE candidate error: ${err instanceof Error ? err.message : String(err)}`,
               )
             }
@@ -246,7 +240,7 @@ const SecondaryPlayer = () => {
         } else if (event.data.type === 'fallbackVideo') {
           // Use the original video URL as fallback if WebRTC fails
           console.log('Using fallback direct video URL:', event.data.sourceUrl)
-          setConnectionStatus('Using fallback: direct video URL')
+          updateConnectionStatus('Using fallback: direct video URL')
 
           // Clear any previous stream
           if (videoRef.current) {
@@ -262,13 +256,13 @@ const SecondaryPlayer = () => {
               console.log('Fallback video can play, attempting playback')
               videoRef.current?.play().catch((err: Error) => {
                 console.error('Error playing fallback video:', err)
-                setConnectionStatus(`Fallback video error: ${err.message}`)
+                updateConnectionStatus(`Fallback video error: ${err.message}`)
               })
             }
 
             videoRef.current.onerror = (err) => {
               console.error('Error loading fallback video:', err)
-              setConnectionStatus('Fallback video load error')
+              updateConnectionStatus('Fallback video load error')
             }
           } else {
             console.error('No video element available for fallback')
@@ -308,10 +302,10 @@ const SecondaryPlayer = () => {
       if (window.opener) {
         console.log('Signaling ready to parent window')
         window.opener.postMessage('windowReady', '*')
-        setConnectionStatus('Ready signal sent, waiting for video...')
+        updateConnectionStatus('Ready signal sent, waiting for video...')
       } else {
         console.error('No opener window found')
-        setConnectionStatus('Error: No opener window found')
+        updateConnectionStatus('Error: No opener window found')
       }
     }
 
@@ -325,34 +319,34 @@ const SecondaryPlayer = () => {
 
       cleanupResources()
     }
-  }, [setConnectionStatus])
+  }, [streamRef, updateConnectionStatus, videoRef])
 
   // Handle video error
   const handleVideoError = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
       console.error('Video error:', e)
-      setConnectionStatus('Video error occurred. Check console for details.')
+      updateConnectionStatus('Video error occurred. Check console for details.')
     },
-    [setConnectionStatus],
+    [updateConnectionStatus],
   )
 
   // Handle video success
   const handleVideoPlay = useCallback(() => {
-    setConnectionStatus('Video playing')
-  }, [setConnectionStatus])
+    updateConnectionStatus('Video playing')
+  }, [updateConnectionStatus])
 
   const handleTestPlayback = useCallback(() => {
     if (videoRef.current) {
       if (videoRef.current?.paused) {
         videoRef.current.play().catch((err) => {
           console.error('Error playing video:', err)
-          setConnectionStatus(`Manual play error: ${err.message}`)
+          updateConnectionStatus(`Manual play error: ${err.message}`)
         })
       } else {
         videoRef.current.pause()
       }
     }
-  }, [setConnectionStatus])
+  }, [updateConnectionStatus, videoRef])
 
   return (
     <div className="video-container secondary">
