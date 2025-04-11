@@ -1,15 +1,13 @@
 import { useCallback, useState } from 'react'
-import { useDualScreen } from '../dual-screen/dual-screen-provider'
+import { useWebRTC } from './useWebRTC'
 
 const SecondaryPlayer = () => {
   const {
-    secondary: {
-      connectionStatus,
-      videoRef,
-      updateConnectionStatus,
-      togglePlayOnSecondary,
-    },
-  } = useDualScreen()
+    connectionStatus,
+    videoRef,
+    updateConnectionStatus,
+    togglePlayOnSecondary,
+  } = useWebRTC()
 
   const [isPlaying, setIsPlaying] = useState(true)
 
