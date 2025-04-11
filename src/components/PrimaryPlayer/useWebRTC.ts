@@ -99,7 +99,7 @@ export const useWebRTC = () => {
         }
         // Create a peer connection
         const peerConnection = new RTCPeerConnection({
-          // actually not needed for local secondary window
+          // actually not needed for local communication
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
         })
         peerConnectionRef.current = peerConnection
@@ -149,9 +149,9 @@ export const useWebRTC = () => {
                 type: 'ice-candidate',
                 candidate: event.candidate
                   ? {
+                      candidate: event.candidate.candidate,
                       sdpMid: event.candidate.sdpMid,
                       sdpMLineIndex: event.candidate.sdpMLineIndex,
-                      candidate: event.candidate.candidate,
                     }
                   : null,
               },
@@ -292,7 +292,7 @@ export const useWebRTC = () => {
       const newWindow = window.open(
         secondaryUrl,
         '_blank',
-        'width=800,height=600',
+        'width=1024,height=768',
       )
       if (!newWindow) {
         alert('Please allow pop-ups for this website')
