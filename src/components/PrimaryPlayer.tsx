@@ -2,13 +2,15 @@ import { useDualScreen } from '../dual-screen/dual-screen-provider'
 
 const PrimaryPlayer = () => {
   const {
-    connectionStatus,
-    videoRef,
-    isSecondWindowOpen,
-    isPaused,
-    openSecondWindow,
-    closeSecondWindow,
-    togglePause,
+    primary: {
+      videoRef,
+      connectionStatus,
+      isSecondWindowOpen,
+      openSecondWindow,
+      closeSecondWindow,
+      isPaused,
+      togglePause,
+    },
   } = useDualScreen()
 
   return (

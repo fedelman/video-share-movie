@@ -22,60 +22,58 @@ export type DualScreenType = (typeof DualScreen)[keyof typeof DualScreen]
 interface DualScreenContextProps {
   isPrimaryScreen: boolean
   isSecondaryScreen: boolean
-  connectionStatus: string
-  videoRef: React.RefObject<HTMLVideoElement | null>
-  streamRef: React.RefObject<MediaStream | null>
-  updateConnectionStatus: (status: string) => void
-  isSecondWindowOpen: boolean
-  isPaused: boolean
-  openSecondWindow: () => Promise<void>
-  closeSecondWindow: () => void
-  togglePause: () => void
-  videoUrl: string | null
-  setVideoUrl: (url: string | null) => void
-  handleVideoError: (e: React.SyntheticEvent<HTMLVideoElement, Event>) => void
-  handleVideoPlay: () => void
-  handleTestPlayback: () => void
-  handleWebRTCOffer: (offer: RTCSessionDescriptionInit) => Promise<void>
+  primary: {
+    videoRef: React.RefObject<HTMLVideoElement | null>
+    connectionStatus: string
+    isSecondWindowOpen: boolean
+    openSecondWindow: () => Promise<void>
+    closeSecondWindow: () => void
+    isPaused: boolean
+    togglePause: () => void
+  }
+  secondary: {
+    videoRef: React.RefObject<HTMLVideoElement | null>
+    connectionStatus: string
+    togglePlayOnSecondary: () => boolean
+    updateConnectionStatus: (status: string) => void
+  }
 }
 
 const DualScreenContext = createContext<DualScreenContextProps>({
   isPrimaryScreen: true,
   isSecondaryScreen: false,
-  connectionStatus: '',
-  videoRef: {
-    current: null,
+  primary: {
+    videoRef: { current: null },
+    connectionStatus: '',
+    isSecondWindowOpen: false,
+    openSecondWindow: async () => {},
+    closeSecondWindow: () => {},
+    isPaused: false,
+    togglePause: () => {},
   },
-  streamRef: {
-    current: null,
+  secondary: {
+    videoRef: { current: null },
+    connectionStatus: '',
+    togglePlayOnSecondary: () => false,
+    updateConnectionStatus: () => undefined,
   },
-  updateConnectionStatus: () => {},
-  isSecondWindowOpen: false,
-  isPaused: false,
-  openSecondWindow: async () => {},
-  closeSecondWindow: () => {},
-  togglePause: () => {},
-  videoUrl: null,
-  setVideoUrl: () => {},
-  handleVideoError: () => {},
-  handleVideoPlay: () => {},
-  handleTestPlayback: () => {},
-  handleWebRTCOffer: async () => {},
 })
 
 export function DualScreenProvider({ children }: PropsWithChildren) {
-  const [connectionStatus, setConnectionStatus] = useState('')
-  const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
-  const [isPaused, setIsPaused] = useState(false)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream>(null)
-  const secondWindowRef = useRef<Window | null>(null)
+
+  const [connectionStatus, setConnectionStatus] = useState('')
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
+  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([])
   const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(
     null,
   )
-  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([])
+
+  const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
+  const secondWindowRef = useRef<Window | null>(null)
+
+  const [isPaused, setIsPaused] = useState(false)
 
   const updateConnectionStatus = useCallback((status: string) => {
     console.log('Connection Status:', status)
@@ -95,33 +93,6 @@ export function DualScreenProvider({ children }: PropsWithChildren) {
     () => secondaryParam === 'true',
     [secondaryParam],
   )
-
-  // Handle video error
-  const handleVideoError = useCallback(
-    (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-      console.error('Video error:', e)
-      updateConnectionStatus('Video error occurred. Check console for details.')
-    },
-    [updateConnectionStatus],
-  )
-
-  // Handle video success
-  const handleVideoPlay = useCallback(() => {
-    updateConnectionStatus('Video playing')
-  }, [updateConnectionStatus])
-
-  const handleTestPlayback = useCallback(() => {
-    if (videoRef.current) {
-      if (videoRef.current?.paused) {
-        videoRef.current.play().catch((err) => {
-          console.error('Error playing video:', err)
-          updateConnectionStatus(`Manual play error: ${err.message}`)
-        })
-      } else {
-        videoRef.current.pause()
-      }
-    }
-  }, [updateConnectionStatus])
 
   // Handle WebRTC offer from primary window
   const handleWebRTCOffer = useCallback(
@@ -286,27 +257,6 @@ export function DualScreenProvider({ children }: PropsWithChildren) {
           new RTCSessionDescription(answer),
         )
         updateConnectionStatus('WebRTC connection established')
-
-        // Add a timeout to check if connection was successful
-        setTimeout(() => {
-          if (peerConnectionRef.current?.connectionState !== 'connected') {
-            console.log(
-              'WebRTC connection not established after timeout, trying fallback',
-            )
-
-            // Try fallback if connection failed
-            if (videoRef.current?.src && secondWindowRef.current) {
-              console.log('Sending fallback video URL:', videoRef.current.src)
-              secondWindowRef.current.postMessage(
-                {
-                  type: 'fallbackVideo',
-                  sourceUrl: videoRef.current.src,
-                },
-                '*',
-              )
-            }
-          }
-        }, 5000) // 5 second timeout
       } catch (error) {
         console.error('Error setting remote description:', error)
         updateConnectionStatus(
@@ -633,6 +583,20 @@ export function DualScreenProvider({ children }: PropsWithChildren) {
     }
   }, [])
 
+  const togglePlayOnSecondary = useCallback(() => {
+    if (videoRef.current) {
+      if (videoRef.current?.paused) {
+        videoRef.current.play().catch((err) => {
+          console.error('Error playing video:', err)
+          updateConnectionStatus(`Manual play error: ${err.message}`)
+        })
+        return true
+      }
+      videoRef.current.pause()
+    }
+    return false
+  }, [updateConnectionStatus])
+
   // Close the second window
   const closeSecondWindow = useCallback(() => {
     if (secondWindowRef.current && !secondWindowRef.current.closed) {
@@ -709,39 +673,6 @@ export function DualScreenProvider({ children }: PropsWithChildren) {
                 pendingIceCandidatesRef.current.push(event.data.candidate)
               }
             }
-          } else if (event.data.type === 'fallbackVideo') {
-            // Use the original video URL as fallback if WebRTC fails
-            console.log(
-              'Using fallback direct video URL:',
-              event.data.sourceUrl,
-            )
-            updateConnectionStatus('Using fallback: direct video URL')
-
-            // Clear any previous stream
-            if (videoRef.current) {
-              if (videoRef.current.srcObject) {
-                videoRef.current.srcObject = null
-              }
-
-              // Set the video source URL
-              setVideoUrl(event.data.sourceUrl)
-
-              // Try to play the video
-              videoRef.current.oncanplay = () => {
-                console.log('Fallback video can play, attempting playback')
-                videoRef.current?.play().catch((err: Error) => {
-                  console.error('Error playing fallback video:', err)
-                  updateConnectionStatus(`Fallback video error: ${err.message}`)
-                })
-              }
-
-              videoRef.current.onerror = (err) => {
-                console.error('Error loading fallback video:', err)
-                updateConnectionStatus('Fallback video load error')
-              }
-            } else {
-              console.error('No video element available for fallback')
-            }
           }
         }
       }
@@ -778,26 +709,50 @@ export function DualScreenProvider({ children }: PropsWithChildren) {
     }
   }, [cleanup, handleWebRTCOffer, isSecondaryScreen, updateConnectionStatus])
 
+  // handler to ask the user for confirmation before leaving / reloading the primary screen when the secondary screen is open
+  useEffect(() => {
+    // handler to ask the user for confirmation before leaving / reloading the primary screen
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (isPrimaryScreen && isSecondWindowOpen) {
+        event.preventDefault()
+        event.returnValue = true
+      }
+    }
+    // handler to close the secondary screen when the user has confirmed to leave / reload the primary screen
+    function handlePageHide() {
+      if (isPrimaryScreen && isSecondWindowOpen) {
+        closeSecondWindow()
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('pagehide', handlePageHide)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('pagehide', handlePageHide)
+    }
+  }, [closeSecondWindow, isPrimaryScreen, isSecondWindowOpen])
+
   return (
     <DualScreenContext
       value={{
         isPrimaryScreen,
         isSecondaryScreen,
-        connectionStatus,
-        videoRef,
-        streamRef,
-        updateConnectionStatus,
-        isSecondWindowOpen,
-        isPaused,
-        openSecondWindow,
-        closeSecondWindow,
-        togglePause,
-        videoUrl,
-        setVideoUrl,
-        handleVideoError,
-        handleVideoPlay,
-        handleTestPlayback,
-        handleWebRTCOffer,
+        primary: {
+          videoRef,
+          connectionStatus,
+          isSecondWindowOpen,
+          openSecondWindow,
+          closeSecondWindow,
+          isPaused,
+          togglePause,
+        },
+        secondary: {
+          videoRef,
+          connectionStatus,
+          updateConnectionStatus,
+          togglePlayOnSecondary,
+        },
       }}
     >
       {children}

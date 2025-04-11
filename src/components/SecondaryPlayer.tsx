@@ -1,14 +1,29 @@
+import { useCallback, useState } from 'react'
 import { useDualScreen } from '../dual-screen/dual-screen-provider'
 
 const SecondaryPlayer = () => {
   const {
-    connectionStatus,
-    videoRef,
-    videoUrl,
-    handleVideoError,
-    handleVideoPlay,
-    handleTestPlayback,
+    secondary: {
+      connectionStatus,
+      videoRef,
+      updateConnectionStatus,
+      togglePlayOnSecondary,
+    },
   } = useDualScreen()
+
+  const [isPlaying, setIsPlaying] = useState(true)
+
+  const handleVideoError = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+      updateConnectionStatus('Video error occurred. Check console for details.')
+      console.error('Video error: ', e)
+    },
+    [updateConnectionStatus],
+  )
+
+  const handleVideoPlay = useCallback(() => {
+    updateConnectionStatus('Video playing')
+  }, [updateConnectionStatus])
 
   return (
     <div className="video-container secondary">
@@ -16,7 +31,6 @@ const SecondaryPlayer = () => {
       <div className="connection-status">Status: {connectionStatus}</div>
       <video
         ref={videoRef}
-        src={videoUrl || undefined}
         autoPlay
         playsInline
         controls
@@ -29,10 +43,10 @@ const SecondaryPlayer = () => {
 
       <button
         type="button"
-        onClick={handleTestPlayback}
+        onClick={() => setIsPlaying(togglePlayOnSecondary())}
         className="video-play-pause-button"
       >
-        Manual Play/Pause
+        {isPlaying ? 'pause' : 'play'}
       </button>
 
       <p>
