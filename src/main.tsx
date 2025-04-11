@@ -1,7 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import App from './App.tsx'
-import { DualScreenProvider } from './dual-screen/dual-screen-provider.tsx'
+
+import App from './App'
+import { DualScreenProvider } from './dual-screen'
 
 const root = document.getElementById('root')
 if (!root) {
