@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { captureVideoStream } from './captureVideoStream'
 
@@ -27,9 +27,15 @@ export const useWebRTC = () => {
   const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
   const secondWindowRef = useRef<Window | null>(null)
   const [isPaused, setIsPaused] = useState(false)
+  const secondWindowCheckIntervalRef = useRef<number | null>(null)
 
   // Clean up resources
   const cleanup = useCallback(() => {
+    // Clear the window check interval
+    if (secondWindowCheckIntervalRef.current) {
+      clearInterval(secondWindowCheckIntervalRef.current)
+      secondWindowCheckIntervalRef.current = null
+    }
     // Close the WebRTC peer connection
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close()
@@ -54,19 +60,16 @@ export const useWebRTC = () => {
   // Start WebRTC connection
   const startWebRTCConnection = useCallback(async () => {
     try {
-      console.log('Starting WebRTC connection setup...')
       updateConnectionStatus('Setting up WebRTC connection...')
 
       // Ensure the video element is ready before capturing the stream
       if (!videoRef.current) {
-        console.error('Video element not available')
-        updateConnectionStatus('Error: Video element not available')
+        updateConnectionStatus('Error: Video element not available', true)
         return
       }
       // Make sure the video is loaded and can be played
       const video = videoRef.current
       if (video.readyState < 2) {
-        // HAVE_CURRENT_DATA
         updateConnectionStatus('Waiting for video to load...')
         await new Promise<void>((resolve) => {
           const onCanPlay = () => {
@@ -76,7 +79,6 @@ export const useWebRTC = () => {
           video.addEventListener('canplay', onCanPlay)
         })
       }
-
       updateConnectionStatus('Capturing video stream...')
 
       // Ensure video is playing before trying to capture stream
@@ -93,8 +95,7 @@ export const useWebRTC = () => {
         streamRef.current = stream
 
         if (stream.getTracks().length === 0) {
-          console.error('No tracks in captured stream')
-          updateConnectionStatus('Error: No video tracks available')
+          updateConnectionStatus('Error: No video tracks available', true)
           return
         }
         // Create a peer connection
@@ -255,8 +256,17 @@ export const useWebRTC = () => {
       if (event.data === 'windowClosed') {
         setIsSecondWindowOpen(false)
         cleanup()
-      } else if (event.data === 'windowReady') {
-        // Once the secondary window signals it's ready, start WebRTC setup
+      } else if (event.data === 'windowReloading') {
+        // Secondary window is reloading - don't destroy connection yet
+        updateConnectionStatus('Secondary window is reloading...')
+      } else if (
+        event.data === 'windowReloaded' ||
+        event.data === 'windowReady'
+      ) {
+        // When secondary window is ready after reload or initial load, start WebRTC setup
+        updateConnectionStatus(
+          'Secondary window is ready, setting up connection...',
+        )
         startWebRTCConnection()
       } else if (event.data === 'play') {
         if (videoRef.current) {
@@ -276,7 +286,13 @@ export const useWebRTC = () => {
         handleIceCandidate(event.data.candidate)
       }
     },
-    [cleanup, handleIceCandidate, handleWebRTCAnswer, startWebRTCConnection],
+    [
+      cleanup,
+      handleIceCandidate,
+      handleWebRTCAnswer,
+      startWebRTCConnection,
+      updateConnectionStatus,
+    ],
   )
   // Open a new window to display the video
   const openSecondWindow = useCallback(async () => {
@@ -315,6 +331,8 @@ export const useWebRTC = () => {
           cleanup()
         }
       }, 500)
+      // Store the interval ID to clear it if needed
+      secondWindowCheckIntervalRef.current = checkWindowLoaded
     } catch (error) {
       updateConnectionStatus(
         `Error opening second window: ${error instanceof Error ? error.message : String(error)}`,
@@ -345,6 +363,13 @@ export const useWebRTC = () => {
       }
     }
   }, [])
+
+  // Clean up when component unmounts
+  useEffect(() => {
+    return () => {
+      closeSecondWindow()
+    }
+  }, [closeSecondWindow])
 
   return {
     videoRef,
