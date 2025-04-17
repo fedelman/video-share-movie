@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { captureVideoStream } from './captureVideoStream'
+import { PeerRole, WebRTCService } from '../../webrtc'
 
 export const useWebRTC = () => {
   const [connectionStatus, setConnectionStatus] = useState('')
@@ -15,19 +15,14 @@ export const useWebRTC = () => {
     },
     [],
   )
-
   const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream>(null)
-
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-  const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(
-    null,
-  )
-
-  const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
-  const secondWindowRef = useRef<Window | null>(null)
   const [isPaused, setIsPaused] = useState(false)
+
+  const secondWindowRef = useRef<Window | null>(null)
+  const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
   const secondWindowCheckIntervalRef = useRef<number | null>(null)
+
+  const webRTCServiceRef = useRef<WebRTCService | null>(null)
 
   // Clean up resources
   const cleanup = useCallback(() => {
@@ -36,264 +31,60 @@ export const useWebRTC = () => {
       clearInterval(secondWindowCheckIntervalRef.current)
       secondWindowCheckIntervalRef.current = null
     }
-    // Close the WebRTC peer connection
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close()
-      peerConnectionRef.current = null
-    }
-    // Stop all tracks in the stream
-    if (streamRef.current) {
-      const tracks = streamRef.current.getTracks()
-      for (const track of tracks) {
-        track.stop()
-      }
-      streamRef.current = null
-    }
-    // Remove message event listener
-    if (messageListenerRef.current) {
-      window.removeEventListener('message', messageListenerRef.current)
-      messageListenerRef.current = null
+    // Clean up WebRTC service
+    if (webRTCServiceRef.current) {
+      webRTCServiceRef.current.cleanup()
     }
     updateConnectionStatus('')
   }, [updateConnectionStatus])
 
-  // Start WebRTC connection
-  const startWebRTCConnection = useCallback(async () => {
-    try {
-      updateConnectionStatus('Setting up WebRTC connection...')
-
-      // Ensure the video element is ready before capturing the stream
-      if (!videoRef.current) {
-        updateConnectionStatus('Error: Video element not available', true)
+  // Handle messages from secondary window
+  const handleMessage = useCallback(
+    (message: unknown) => {
+      if (typeof message !== 'string') {
         return
       }
-      // Make sure the video is loaded and can be played
-      const video = videoRef.current
-      if (video.readyState < 2) {
-        updateConnectionStatus('Waiting for video to load...')
-        await new Promise<void>((resolve) => {
-          const onCanPlay = () => {
-            video.removeEventListener('canplay', onCanPlay)
-            resolve()
-          }
-          video.addEventListener('canplay', onCanPlay)
-        })
-      }
-      updateConnectionStatus('Capturing video stream...')
-
-      // Ensure video is playing before trying to capture stream
-      try {
-        if (video.paused) {
-          // Force the video to play with a user interaction or muted
-          await video.play()
-        }
-        // Capture the video stream
-        const stream = captureVideoStream(video)
-        console.log('Captured stream with tracks:', stream.getTracks().length)
-
-        // Store the stream reference for cleanup
-        streamRef.current = stream
-
-        if (stream.getTracks().length === 0) {
-          updateConnectionStatus('Error: No video tracks available', true)
-          return
-        }
-        // Create a peer connection
-        const peerConnection = new RTCPeerConnection({
-          // actually not needed for local communication
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        })
-        peerConnectionRef.current = peerConnection
-
-        // Monitor connection state changes
-        peerConnection.onconnectionstatechange = () => {
-          const isError =
-            peerConnection.connectionState === 'failed' ||
-            peerConnection.connectionState === 'disconnected'
-          updateConnectionStatus(
-            `WebRTC connection: ${peerConnection.connectionState}`,
-            isError,
-          )
-        }
-        // Monitor ICE connection state
-        peerConnection.oniceconnectionstatechange = () => {
-          if (
-            peerConnection.iceConnectionState === 'failed' ||
-            peerConnection.iceConnectionState === 'disconnected'
-          ) {
-            console.error(
-              `ICE connection state changed: ${peerConnection.iceConnectionState}`,
-            )
-          } else {
-            console.log(
-              `ICE connection state changed: ${peerConnection.iceConnectionState}`,
-            )
-          }
-        }
-        // Add stream tracks to the peer connection
-        for (const track of stream.getTracks()) {
-          peerConnection.addTrack(track, stream)
-          console.log(`Added track: ${track.kind} to peer connection`)
-        }
-        // Handle ICE candidates
-        peerConnection.onicecandidate = (event) => {
-          console.log(
-            'Generated ICE candidate:',
-            event.candidate
-              ? event.candidate.candidate
-              : 'null (gathering complete)',
-          )
-          if (secondWindowRef.current) {
-            // For ICE candidates, we can safely send the serializable candidate data
-            secondWindowRef.current.postMessage(
-              {
-                type: 'ice-candidate',
-                candidate: event.candidate
-                  ? {
-                      candidate: event.candidate.candidate,
-                      sdpMid: event.candidate.sdpMid,
-                      sdpMLineIndex: event.candidate.sdpMLineIndex,
-                    }
-                  : null,
-              },
-              '*',
-            )
-          }
-        }
-        // Create and send offer
-        const offer = await peerConnection.createOffer()
-        await peerConnection.setLocalDescription(offer)
-        console.log('Created and set local description (offer):', offer.type)
-
-        // Send offer to secondary window
-        if (secondWindowRef.current) {
-          secondWindowRef.current.postMessage(
-            {
-              type: 'webrtc-offer',
-              offer: peerConnection.localDescription?.toJSON(),
-            },
-            '*',
-          )
-          updateConnectionStatus('WebRTC offer sent, waiting for answer...')
-        }
-      } catch (error) {
-        updateConnectionStatus(
-          `WebRTC setup error: ${error instanceof Error ? error.message : String(error)}`,
-          true,
-        )
-      }
-    } catch (error) {
-      updateConnectionStatus(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
-        true,
-      )
-    }
-  }, [updateConnectionStatus])
-
-  // Handle ICE candidate from secondary window
-  const handleIceCandidate = useCallback(
-    (candidate: RTCIceCandidateInit | null) => {
-      try {
-        if (!peerConnectionRef.current) {
-          console.error('No peer connection available')
-          return
-        }
-        if (candidate) {
-          peerConnectionRef.current.addIceCandidate(
-            new RTCIceCandidate(candidate),
-          )
-        }
-      } catch (error) {
-        console.error('Error adding ICE candidate:', error)
-      }
-    },
-    [],
-  )
-
-  // Handle WebRTC answer from secondary window
-  const handleWebRTCAnswer = useCallback(
-    async (answer: RTCSessionDescriptionInit) => {
-      try {
-        console.log('Received WebRTC answer from secondary window')
-
-        if (!peerConnectionRef.current) {
-          console.error('No peer connection available')
-          return
-        }
-        console.log('Setting remote description from answer')
-        await peerConnectionRef.current.setRemoteDescription(
-          new RTCSessionDescription(answer),
-        )
-        updateConnectionStatus('WebRTC connection established')
-      } catch (error) {
-        updateConnectionStatus(
-          `WebRTC error: ${error instanceof Error ? error.message : String(error)}`,
-          true,
-        )
-      }
-    },
-    [updateConnectionStatus],
-  )
-
-  // Close the second window
-  const closeSecondWindow = useCallback(() => {
-    if (secondWindowRef.current && !secondWindowRef.current.closed) {
-      secondWindowRef.current.close()
-      secondWindowRef.current = null
-      setIsSecondWindowOpen(false)
-      cleanup()
-    }
-  }, [cleanup])
-
-  // Set up message listener for communication with the second window
-  const messageListener = useCallback(
-    (event: MessageEvent) => {
-      // Only process messages from our secondary window
-      if (event.source !== secondWindowRef.current) return
-
-      console.log('Received message from secondary window:', event.data)
-
-      if (event.data === 'windowClosed') {
+      if (message === 'windowClosed') {
         setIsSecondWindowOpen(false)
         cleanup()
-      } else if (event.data === 'windowReloading') {
+      } else if (message === 'windowReloading') {
         // Secondary window is reloading - don't destroy connection yet
         updateConnectionStatus('Secondary window is reloading...')
-      } else if (
-        event.data === 'windowReloaded' ||
-        event.data === 'windowReady'
-      ) {
+      } else if (message === 'windowReloaded' || message === 'windowReady') {
         // When secondary window is ready after reload or initial load, start WebRTC setup
         updateConnectionStatus(
           'Secondary window is ready, setting up connection...',
         )
-        startWebRTCConnection()
-      } else if (event.data === 'play') {
+        if (webRTCServiceRef.current && videoRef.current) {
+          webRTCServiceRef.current.createOffer(videoRef.current)
+        }
+      } else if (message === 'play') {
         if (videoRef.current) {
           videoRef.current.play()
           setIsPaused(false)
         }
-      } else if (event.data === 'pause') {
+      } else if (message === 'pause') {
         if (videoRef.current) {
           videoRef.current.pause()
           setIsPaused(true)
         }
-      } else if (event.data?.type === 'webrtc-answer') {
-        // Handle the WebRTC answer from the secondary window
-        handleWebRTCAnswer(event.data.answer)
-      } else if (event.data?.type === 'ice-candidate') {
-        // Handle ICE candidate from secondary window
-        handleIceCandidate(event.data.candidate)
       }
     },
-    [
-      cleanup,
-      handleIceCandidate,
-      handleWebRTCAnswer,
-      startWebRTCConnection,
-      updateConnectionStatus,
-    ],
+    [cleanup, updateConnectionStatus],
   )
+  // Setup WebRTC service
+  const setupWebRTCService = useCallback(() => {
+    if (!webRTCServiceRef.current) {
+      webRTCServiceRef.current = new WebRTCService(
+        PeerRole.PRIMARY,
+        secondWindowRef.current,
+        videoRef.current,
+        updateConnectionStatus,
+        handleMessage,
+      )
+    }
+  }, [handleMessage, updateConnectionStatus])
+
   // Open a new window to display the video
   const openSecondWindow = useCallback(async () => {
     if (secondWindowRef.current && !secondWindowRef.current.closed) {
@@ -319,8 +110,21 @@ export const useWebRTC = () => {
       setIsSecondWindowOpen(true)
       updateConnectionStatus('Waiting for second window to load...')
 
-      // Store the listener reference so we can remove it later
-      messageListenerRef.current = messageListener
+      // Set up WebRTC service
+      setupWebRTCService()
+
+      // Setup message listener function
+      const messageListener = (event: MessageEvent) => {
+        // Only process messages from our secondary window
+        if (
+          event.source === secondWindowRef.current &&
+          webRTCServiceRef.current
+        ) {
+          webRTCServiceRef.current.handleMessage(event)
+        }
+      }
+
+      // Add message listener
       window.addEventListener('message', messageListener)
 
       // Check if the window is closed periodically
@@ -328,6 +132,7 @@ export const useWebRTC = () => {
         if (newWindow.closed) {
           clearInterval(checkWindowLoaded)
           setIsSecondWindowOpen(false)
+          window.removeEventListener('message', messageListener)
           cleanup()
         }
       }, 500)
@@ -339,7 +144,17 @@ export const useWebRTC = () => {
         true,
       )
     }
-  }, [cleanup, messageListener, updateConnectionStatus])
+  }, [cleanup, setupWebRTCService, updateConnectionStatus])
+
+  // Close the second window
+  const closeSecondWindow = useCallback(() => {
+    if (secondWindowRef.current && !secondWindowRef.current.closed) {
+      secondWindowRef.current.close()
+      secondWindowRef.current = null
+      setIsSecondWindowOpen(false)
+      cleanup()
+    }
+  }, [cleanup])
 
   // Toggle video pause
   const togglePause = useCallback(() => {
@@ -350,16 +165,16 @@ export const useWebRTC = () => {
       setIsPaused(false)
 
       // Notify secondary window
-      if (secondWindowRef.current && !secondWindowRef.current.closed) {
-        secondWindowRef.current.postMessage('play', '*')
+      if (webRTCServiceRef.current) {
+        webRTCServiceRef.current.sendMessage('play')
       }
     } else {
       videoRef.current.pause()
       setIsPaused(true)
 
       // Notify secondary window
-      if (secondWindowRef.current && !secondWindowRef.current.closed) {
-        secondWindowRef.current.postMessage('pause', '*')
+      if (webRTCServiceRef.current) {
+        webRTCServiceRef.current.sendMessage('pause')
       }
     }
   }, [])
