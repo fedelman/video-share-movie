@@ -1,6 +1,6 @@
 import { captureVideoStream } from './captureVideoStream'
 
-export type ConnectionStatusCallback = (
+export type WebRTConnectionStatusCallback = (
   status: string,
   isError?: boolean,
 ) => void
@@ -12,22 +12,23 @@ export const PeerRole = {
   SECONDARY: 'SECONDARY',
 } as const
 
-type PeerRoleType = (typeof PeerRole)[keyof typeof PeerRole]
-export class WebRTCService {
-  private role: PeerRoleType
+export type PeerRole = (typeof PeerRole)[keyof typeof PeerRole]
+
+export class WebRTConnectionService {
+  private role: PeerRole
   private peerConnection: RTCPeerConnection | null = null
   private remoteWindow: Window
-  private updateConnectionStatus: ConnectionStatusCallback
+  private statusCallback: WebRTConnectionStatusCallback
   private onMessageReceived: MessageCallback
 
   private videoElement: HTMLVideoElement
   private stream: MediaStream | null = null
 
   constructor(
-    role: PeerRoleType,
+    role: PeerRole,
     remoteWindow: Window | null,
     videoElement: HTMLVideoElement | null,
-    updateConnectionStatus: ConnectionStatusCallback,
+    statusCallback: WebRTConnectionStatusCallback,
     onMessageReceived: MessageCallback,
   ) {
     this.role = role
@@ -39,7 +40,7 @@ export class WebRTCService {
       throw new Error('Video element is required for a WebRTC connection.')
     }
     this.videoElement = videoElement
-    this.updateConnectionStatus = updateConnectionStatus
+    this.statusCallback = statusCallback
     this.onMessageReceived = onMessageReceived
   }
 
@@ -57,7 +58,7 @@ export class WebRTCService {
     if (this.videoElement?.srcObject) {
       this.videoElement.srcObject = null
     }
-    this.updateConnectionStatus('')
+    this.statusCallback('')
   }
   /**
    * Send a message to the remote window
@@ -88,11 +89,11 @@ export class WebRTCService {
    */
   public async createOffer(videoElement: HTMLVideoElement): Promise<void> {
     try {
-      this.updateConnectionStatus('Setting up WebRTC connection...')
+      this.statusCallback('Setting up WebRTC connection...')
       this.videoElement = videoElement
 
       if (videoElement.readyState < 2) {
-        this.updateConnectionStatus('Waiting for video to load...')
+        this.statusCallback('Waiting for video to load...')
         await new Promise<void>((resolve) => {
           const onCanPlay = () => {
             videoElement.removeEventListener('canplay', onCanPlay)
@@ -102,14 +103,14 @@ export class WebRTCService {
         })
       }
       // Ensure video is playing
-      this.updateConnectionStatus('Capturing video stream...')
+      this.statusCallback('Capturing video stream...')
       if (videoElement.paused) {
         await videoElement.play()
       }
       // Capture the video stream
       this.stream = captureVideoStream(videoElement)
       if (this.stream.getTracks().length === 0) {
-        this.updateConnectionStatus('Error: No video tracks available', true)
+        this.statusCallback('Error: No video tracks available', true)
         return
       }
       // Initialize RTCPeerConnection
@@ -123,10 +124,7 @@ export class WebRTCService {
       }
       // Create offer
       if (!this.peerConnection) {
-        this.updateConnectionStatus(
-          'Error: Peer connection not initialized',
-          true,
-        )
+        this.statusCallback('Error: Peer connection not initialized', true)
         return
       }
       const offer = await this.peerConnection.createOffer()
@@ -138,10 +136,10 @@ export class WebRTCService {
           type: 'webrtc-offer',
           offer: this.peerConnection.localDescription.toJSON(),
         })
-        this.updateConnectionStatus('WebRTC offer sent, waiting for answer...')
+        this.statusCallback('WebRTC offer sent, waiting for answer...')
       }
     } catch (error) {
-      this.updateConnectionStatus(
+      this.statusCallback(
         `WebRTC setup error: ${error instanceof Error ? error.message : String(error)}`,
         true,
       )
@@ -152,16 +150,13 @@ export class WebRTCService {
    */
   private async handleOffer(offer: RTCSessionDescriptionInit): Promise<void> {
     try {
-      this.updateConnectionStatus('Setting up WebRTC connection...')
+      this.statusCallback('Setting up WebRTC connection...')
 
       // Initialize RTCPeerConnection
       this.initializePeerConnection()
 
       if (!this.peerConnection) {
-        this.updateConnectionStatus(
-          'Error: Peer connection not initialized',
-          true,
-        )
+        this.statusCallback('Error: Peer connection not initialized', true)
         return
       }
       // Set the remote description (the offer)
@@ -180,11 +175,9 @@ export class WebRTCService {
         type: 'webrtc-answer',
         answer,
       })
-      this.updateConnectionStatus(
-        'WebRTC connection established, waiting for video...',
-      )
+      this.statusCallback('WebRTC connection established, waiting for video...')
     } catch (error) {
-      this.updateConnectionStatus(`WebRTC setup error: ${error}`, true)
+      this.statusCallback(`WebRTC setup error: ${error}`, true)
     }
   }
   /**
@@ -193,15 +186,15 @@ export class WebRTCService {
   private async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
     try {
       if (!this.peerConnection) {
-        this.updateConnectionStatus('No peer connection available', true)
+        this.statusCallback('No peer connection available', true)
         return
       }
       await this.peerConnection.setRemoteDescription(
         new RTCSessionDescription(answer),
       )
-      this.updateConnectionStatus('WebRTC connection established')
+      this.statusCallback('WebRTC connection established')
     } catch (error) {
-      this.updateConnectionStatus(
+      this.statusCallback(
         `WebRTC error: ${error instanceof Error ? error.message : String(error)}`,
         true,
       )
@@ -215,7 +208,7 @@ export class WebRTCService {
   ): Promise<void> {
     try {
       if (!this.peerConnection) {
-        this.updateConnectionStatus(
+        this.statusCallback(
           'Error adding ICE candidate. No peer connection set up.',
           true,
         )
@@ -227,7 +220,7 @@ export class WebRTCService {
         )
       }
     } catch (error) {
-      this.updateConnectionStatus(`Error adding ICE candidate: ${error}`, true)
+      this.statusCallback(`Error adding ICE candidate: ${error}`, true)
     }
   }
 
@@ -245,7 +238,7 @@ export class WebRTCService {
       const isError =
         this.peerConnection?.connectionState === 'failed' ||
         this.peerConnection?.connectionState === 'disconnected'
-      this.updateConnectionStatus(
+      this.statusCallback(
         `WebRTC connection: ${this.peerConnection?.connectionState}`,
         isError,
       )
@@ -254,7 +247,7 @@ export class WebRTCService {
       const isError =
         this.peerConnection?.iceConnectionState === 'failed' ||
         this.peerConnection?.iceConnectionState === 'disconnected'
-      this.updateConnectionStatus(
+      this.statusCallback(
         `ICE connection state changed: ${this.peerConnection?.iceConnectionState}`,
         isError,
       )
@@ -288,7 +281,7 @@ export class WebRTCService {
           this.stream = event.streams[0]
           this.videoElement.srcObject = this.stream
         } else {
-          this.updateConnectionStatus(
+          this.statusCallback(
             'Video track received but no video element is set',
             true,
           )
@@ -301,7 +294,7 @@ export class WebRTCService {
     return this.peerConnection
   }
 
-  public getRole(): PeerRoleType {
+  public getRole(): PeerRole {
     return this.role
   }
 }

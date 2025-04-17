@@ -1,28 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { PeerRole, WebRTCService } from '../../webrtc'
+import { PeerRole, WebRTConnectionService } from '../../web-rtc'
+
+export interface WebRTCStatus {
+  message: string
+  isError?: boolean
+}
 
 export function useWebRTC() {
-  const [connectionStatus, setConnectionStatus] = useState(
-    'Waiting for connection...',
-  )
-  const updateConnectionStatus = useCallback(
-    (status: string, isError = false) => {
-      if (isError) {
-        console.error('Connection Status:', status)
-      } else {
-        console.log('Connection Status:', status)
-      }
-      setConnectionStatus(status)
-    },
-    [],
-  )
+  const [status, setStatus] = useState<WebRTCStatus>({
+    message: 'Waiting for connection...',
+    isError: false,
+  })
+  const updateStatus = useCallback((message: string, isError = false) => {
+    if (isError) {
+      console.error('Status:', message)
+    } else {
+      console.log('Status:', message)
+    }
+    setStatus({ message, isError })
+  }, [])
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const isPlayingRef = useRef<boolean>(true)
 
   // Reference to our WebRTCService
-  const webRTCServiceRef = useRef<WebRTCService | null>(null)
+  const webRTCServiceRef = useRef<WebRTConnectionService | null>(null)
 
   const togglePlayOnSecondary = useCallback(() => {
     if (videoRef.current) {
@@ -58,21 +61,34 @@ export function useWebRTC() {
 
   // Set up WebRTC service
   const setupWebRTCService = useCallback(() => {
+    // Clean up existing service if present
     if (webRTCServiceRef.current) {
+      webRTCServiceRef.current.cleanup()
+      webRTCServiceRef.current = null
+    }
+
+    if (!window.opener || !videoRef.current) {
+      updateStatus(
+        'Error: Unable to establish connection with primary window',
+        true,
+      )
       return
     }
-    webRTCServiceRef.current = new WebRTCService(
+
+    webRTCServiceRef.current = new WebRTConnectionService(
       PeerRole.SECONDARY,
       window.opener,
       videoRef.current,
-      updateConnectionStatus,
+      (message: string, isError = false) => {
+        setStatus({ message, isError })
+      },
       handleMessage,
     )
-  }, [handleMessage, updateConnectionStatus])
+  }, [handleMessage, updateStatus])
 
   // Set up message listener for secondary window
   useEffect(() => {
-    updateConnectionStatus('Waiting for connection from primary window...')
+    updateStatus('Waiting for connection from primary window...')
 
     // Setup WebRTC service
     setupWebRTCService()
@@ -109,9 +125,9 @@ export function useWebRTC() {
           sessionStorage.setItem('wasLoaded', 'true')
           webRTCServiceRef.current.sendMessage('windowReady')
         }
-        updateConnectionStatus('Ready signal sent, waiting for video...')
+        updateStatus('Ready signal sent, waiting for video...')
       } else {
-        updateConnectionStatus('Error: No opener window found', true)
+        updateStatus('Error: No opener window found', true)
       }
     }
 
@@ -124,14 +140,15 @@ export function useWebRTC() {
 
       if (webRTCServiceRef.current) {
         webRTCServiceRef.current.cleanup()
+        webRTCServiceRef.current = null
       }
     }
-  }, [setupWebRTCService, updateConnectionStatus])
+  }, [setupWebRTCService, updateStatus])
 
   return {
-    connectionStatus,
+    status,
     togglePlayOnSecondary,
-    updateConnectionStatus,
+    updateStatus,
     videoRef,
   }
 }

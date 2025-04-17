@@ -7,7 +7,7 @@ import { useWebRTC } from './useWebRTC'
 export function PrimaryPlayer() {
   const {
     videoRef,
-    connectionStatus,
+    status,
     isSecondWindowOpen,
     openSecondWindow,
     closeSecondWindow,
@@ -76,8 +76,8 @@ export function PrimaryPlayer() {
         </button>
       </div>
 
-      {connectionStatus && (
-        <div className="connection-status">Status: {connectionStatus}</div>
+      {status.message && (
+        <div className="web-rtc-status">Status: {status.message}</div>
       )}
     </div>
   )

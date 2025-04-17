@@ -3,31 +3,26 @@ import { useCallback, useState } from 'react'
 import { useWebRTC } from './useWebRTC'
 
 export function SecondaryPlayer() {
-  const {
-    connectionStatus,
-    videoRef,
-    updateConnectionStatus,
-    togglePlayOnSecondary,
-  } = useWebRTC()
+  const { videoRef, status, updateStatus, togglePlayOnSecondary } = useWebRTC()
 
   const [isPlaying, setIsPlaying] = useState(true)
 
   const handleVideoError = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-      updateConnectionStatus('Video error occurred. Check console for details.')
+      updateStatus('Video error occurred. Check console for details.')
       console.error('Video error: ', e)
     },
-    [updateConnectionStatus],
+    [updateStatus],
   )
 
   const handleVideoPlay = useCallback(() => {
-    updateConnectionStatus('Video playing')
-  }, [updateConnectionStatus])
+    updateStatus('Video playing')
+  }, [updateStatus])
 
   return (
     <div className="video-container secondary">
       <h1>Video Streaming Receiver (WebRTC)</h1>
-      <div className="connection-status">Status: {connectionStatus}</div>
+      <div className="web-rtc-status">Status: {status.message}</div>
       <video
         ref={videoRef}
         autoPlay
