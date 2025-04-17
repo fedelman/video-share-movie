@@ -1,26 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PeerRole, WebRTConnectionService } from '../../web-rtc'
-
-export interface WebRTCStatus {
-  message: string
-  isError?: boolean
-}
+import { useStatus } from '../../useStatus'
 
 export const useWebRTC = () => {
-  const [status, setStatus] = useState<WebRTCStatus>({
-    message: '',
-    isError: false,
-  })
+  const { status, updateStatus } = useStatus()
 
-  const updateStatus = useCallback((message: string, isError = false) => {
-    if (isError) {
-      console.error('Status:', message)
-    } else {
-      console.log('Status:', message)
-    }
-    setStatus({ message, isError })
-  }, [])
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPaused, setIsPaused] = useState(false)
 
@@ -85,13 +70,11 @@ export const useWebRTC = () => {
         PeerRole.PRIMARY,
         secondWindowRef.current,
         videoRef.current,
-        (message: string, isError = false) => {
-          setStatus({ message, isError })
-        },
+        updateStatus,
         handleMessage,
       )
     }
-  }, [handleMessage])
+  }, [handleMessage, updateStatus])
 
   // Open a new window to display the video
   const openSecondWindow = useCallback(async () => {

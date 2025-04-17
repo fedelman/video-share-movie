@@ -9,8 +9,10 @@ export function SecondaryPlayer() {
 
   const handleVideoError = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-      updateStatus('Video error occurred. Check console for details.')
-      console.error('Video error: ', e)
+      updateStatus(
+        `Video error occurred. Check console for details: ${e}`,
+        true,
+      )
     },
     [updateStatus],
   )

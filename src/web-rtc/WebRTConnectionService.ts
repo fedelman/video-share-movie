@@ -239,7 +239,7 @@ export class WebRTConnectionService {
         this.peerConnection?.connectionState === 'failed' ||
         this.peerConnection?.connectionState === 'disconnected'
       this.statusCallback(
-        `WebRTC connection: ${this.peerConnection?.connectionState}`,
+        `WebRTC connection state is "${this.peerConnection?.connectionState}"`,
         isError,
       )
     }
@@ -248,7 +248,7 @@ export class WebRTConnectionService {
         this.peerConnection?.iceConnectionState === 'failed' ||
         this.peerConnection?.iceConnectionState === 'disconnected'
       this.statusCallback(
-        `ICE connection state changed: ${this.peerConnection?.iceConnectionState}`,
+        `ICE connection state is "${this.peerConnection?.iceConnectionState}"`,
         isError,
       )
     }
@@ -275,7 +275,7 @@ export class WebRTConnectionService {
     if (this.role === PeerRole.PRIMARY) return
 
     this.peerConnection.ontrack = (event) => {
-      console.log('Track received:', event.track.kind)
+      this.statusCallback(`New track of type "${event.track.kind}" received.`)
       if (event.streams?.[0]) {
         if (this.videoElement) {
           this.stream = event.streams[0]

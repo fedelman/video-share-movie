@@ -1,25 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { PeerRole, WebRTConnectionService } from '../../web-rtc'
-
-export interface WebRTCStatus {
-  message: string
-  isError?: boolean
-}
+import { useStatus } from '../../useStatus'
 
 export function useWebRTC() {
-  const [status, setStatus] = useState<WebRTCStatus>({
-    message: 'Waiting for connection...',
-    isError: false,
-  })
-  const updateStatus = useCallback((message: string, isError = false) => {
-    if (isError) {
-      console.error('Status:', message)
-    } else {
-      console.log('Status:', message)
-    }
-    setStatus({ message, isError })
-  }, [])
+  const { status, updateStatus } = useStatus()
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const isPlayingRef = useRef<boolean>(true)
@@ -79,9 +64,7 @@ export function useWebRTC() {
       PeerRole.SECONDARY,
       window.opener,
       videoRef.current,
-      (message: string, isError = false) => {
-        setStatus({ message, isError })
-      },
+      updateStatus,
       handleMessage,
     )
   }, [handleMessage, updateStatus])
@@ -99,7 +82,6 @@ export function useWebRTC() {
         webRTCServiceRef.current.sendMessage('windowReloading')
       }
     }
-
     // Send message to opener when this window is closed or reloaded
     window.addEventListener('beforeunload', handleBeforeUnload)
 
@@ -109,7 +91,6 @@ export function useWebRTC() {
         webRTCServiceRef.current.handleMessage(event)
       }
     }
-
     window.addEventListener('message', messageListener)
 
     // Signal to the opener that this window is ready to receive connections
