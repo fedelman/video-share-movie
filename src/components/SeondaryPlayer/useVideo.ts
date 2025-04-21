@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PeerRole, WebRTConnectionService } from '../../web-rtc'
 import { useStatus } from '../../useStatus'
@@ -7,28 +7,27 @@ export function useVideo() {
   const { status, updateStatus } = useStatus()
 
   const videoRef = useRef<HTMLVideoElement>(null)
-  const isPlayingRef = useRef<boolean>(true)
+  const [isPaused, setIsPaused] = useState(false)
 
-  // Reference to our WebRTCService
   const webRTCServiceRef = useRef<WebRTConnectionService | null>(null)
 
-  const togglePlayOnSecondary = useCallback(() => {
-    if (videoRef.current) {
-      if (videoRef.current.paused) {
-        videoRef.current.play()
-        isPlayingRef.current = true
-        if (window.opener && webRTCServiceRef.current) {
-          webRTCServiceRef.current.sendMessage('play')
-        }
-      } else {
-        videoRef.current.pause()
-        isPlayingRef.current = false
-        if (window.opener && webRTCServiceRef.current) {
-          webRTCServiceRef.current.sendMessage('pause')
-        }
+  const togglePause = useCallback(() => {
+    if (videoRef.current === null) {
+      return
+    }
+    if (videoRef.current.paused) {
+      videoRef.current.play()
+      setIsPaused(false)
+      if (window.opener && webRTCServiceRef.current) {
+        webRTCServiceRef.current.sendMessage('play')
+      }
+    } else {
+      videoRef.current.pause()
+      setIsPaused(true)
+      if (window.opener && webRTCServiceRef.current) {
+        webRTCServiceRef.current.sendMessage('pause')
       }
     }
-    return isPlayingRef.current
   }, [])
 
   const handleMessage = useCallback((message: unknown) => {
@@ -37,10 +36,10 @@ export function useVideo() {
     }
     if (message === 'play' && videoRef.current) {
       videoRef.current.play()
-      isPlayingRef.current = true
+      setIsPaused(false)
     } else if (message === 'pause' && videoRef.current) {
       videoRef.current.pause()
-      isPlayingRef.current = false
+      setIsPaused(true)
     }
   }, [])
 
@@ -51,7 +50,6 @@ export function useVideo() {
       webRTCServiceRef.current.cleanup()
       webRTCServiceRef.current = null
     }
-
     if (!window.opener || !videoRef.current) {
       updateStatus(
         'Error: Unable to establish connection with primary window',
@@ -59,7 +57,6 @@ export function useVideo() {
       )
       return
     }
-
     webRTCServiceRef.current = new WebRTConnectionService(
       PeerRole.SECONDARY,
       window.opener,
@@ -111,7 +108,6 @@ export function useVideo() {
         updateStatus('Error: No opener window found', true)
       }
     }
-
     // Signal ready to the parent window after a short delay to ensure everything is loaded
     setTimeout(signalReady, 500)
 
@@ -128,8 +124,9 @@ export function useVideo() {
 
   return {
     status,
-    togglePlayOnSecondary,
     updateStatus,
+    togglePause,
+    isPaused,
     videoRef,
   }
 }

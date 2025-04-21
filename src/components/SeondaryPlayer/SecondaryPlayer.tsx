@@ -1,11 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 
 import { useVideo } from './useVideo'
 
 export function SecondaryPlayer() {
-  const { videoRef, status, updateStatus, togglePlayOnSecondary } = useVideo()
-
-  const [isPlaying, setIsPlaying] = useState(true)
+  const { videoRef, status, updateStatus, togglePause, isPaused } = useVideo()
 
   const handleVideoError = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
@@ -23,7 +21,7 @@ export function SecondaryPlayer() {
 
   return (
     <div className="video-container secondary">
-      <h1>Video Streaming Receiver (WebRTC)</h1>
+      <h1>Video Streaming Receiver (via WebRTC)</h1>
       <div className="web-rtc-status">Status: {status.message}</div>
       <video
         ref={videoRef}
@@ -39,10 +37,10 @@ export function SecondaryPlayer() {
 
       <button
         type="button"
-        onClick={() => setIsPlaying(togglePlayOnSecondary())}
+        onClick={togglePause}
         className="video-play-pause-button"
       >
-        {isPlaying ? 'pause' : 'play'}
+        {isPaused ? 'play' : 'pause'}
       </button>
 
       <p>
