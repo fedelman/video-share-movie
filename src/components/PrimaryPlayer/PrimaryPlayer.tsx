@@ -2,18 +2,18 @@ import { useEffect } from 'react'
 
 import { useDualScreen } from '../../dual-screen/dual-screen-provider'
 
-import { useWebRTC } from './useWebRTC'
+import { useVideo } from './useVideo'
 
 export function PrimaryPlayer() {
   const {
     videoRef,
     status,
-    isSecondWindowOpen,
-    openSecondWindow,
-    closeSecondWindow,
+    isSecondaryOpen,
+    openSecondary,
+    closeSecondary,
     isPaused,
     togglePause,
-  } = useWebRTC()
+  } = useVideo()
 
   const { isPrimaryScreen } = useDualScreen()
 
@@ -21,15 +21,15 @@ export function PrimaryPlayer() {
   useEffect(() => {
     // handler to ask the user for confirmation before leaving / reloading the primary screen
     function handleBeforeUnload(event: BeforeUnloadEvent) {
-      if (isPrimaryScreen && isSecondWindowOpen) {
+      if (isPrimaryScreen && isSecondaryOpen) {
         event.preventDefault()
         event.returnValue = true
       }
     }
     // handler to close the secondary screen when the user has confirmed to leave / reload the primary screen
     function handlePageHide() {
-      if (isPrimaryScreen && isSecondWindowOpen) {
-        closeSecondWindow()
+      if (isPrimaryScreen && isSecondaryOpen) {
+        closeSecondary()
       }
     }
 
@@ -39,7 +39,7 @@ export function PrimaryPlayer() {
       window.removeEventListener('beforeunload', handleBeforeUnload)
       window.removeEventListener('pagehide', handlePageHide)
     }
-  }, [closeSecondWindow, isPrimaryScreen, isSecondWindowOpen])
+  }, [closeSecondary, isPrimaryScreen, isSecondaryOpen])
 
   return (
     <div className="video-container primary">
@@ -57,16 +57,16 @@ export function PrimaryPlayer() {
       <div className="controls">
         <button
           type="button"
-          onClick={openSecondWindow}
-          disabled={isSecondWindowOpen}
+          onClick={openSecondary}
+          disabled={isSecondaryOpen}
         >
           Open Secondary Window
         </button>
 
         <button
           type="button"
-          onClick={closeSecondWindow}
-          disabled={!isSecondWindowOpen}
+          onClick={closeSecondary}
+          disabled={!isSecondaryOpen}
         >
           Close Secondary Window
         </button>

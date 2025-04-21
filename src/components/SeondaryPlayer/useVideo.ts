@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { PeerRole, WebRTConnectionService } from '../../web-rtc'
 import { useStatus } from '../../useStatus'
 
-export function useWebRTC() {
+export function useVideo() {
   const { status, updateStatus } = useStatus()
 
   const videoRef = useRef<HTMLVideoElement>(null)

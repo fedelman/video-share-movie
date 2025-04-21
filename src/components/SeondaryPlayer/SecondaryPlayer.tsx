@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react'
 
-import { useWebRTC } from './useWebRTC'
+import { useVideo } from './useVideo'
 
 export function SecondaryPlayer() {
-  const { videoRef, status, updateStatus, togglePlayOnSecondary } = useWebRTC()
+  const { videoRef, status, updateStatus, togglePlayOnSecondary } = useVideo()
 
   const [isPlaying, setIsPlaying] = useState(true)
 

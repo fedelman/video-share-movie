@@ -3,24 +3,24 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { PeerRole, WebRTConnectionService } from '../../web-rtc'
 import { useStatus } from '../../useStatus'
 
-export const useWebRTC = () => {
+export const useVideo = () => {
   const { status, updateStatus } = useStatus()
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPaused, setIsPaused] = useState(false)
 
-  const secondWindowRef = useRef<Window | null>(null)
-  const [isSecondWindowOpen, setIsSecondWindowOpen] = useState(false)
-  const secondWindowCheckIntervalRef = useRef<number | null>(null)
+  const secondaryRef = useRef<Window | null>(null)
+  const [isSecondaryOpen, setIsSecondaryOpen] = useState(false)
+  const secondaryCheckIntervalRef = useRef<number | null>(null)
 
   const webRTCServiceRef = useRef<WebRTConnectionService | null>(null)
 
   // Clean up resources
   const cleanup = useCallback(() => {
     // Clear the window check interval
-    if (secondWindowCheckIntervalRef.current) {
-      clearInterval(secondWindowCheckIntervalRef.current)
-      secondWindowCheckIntervalRef.current = null
+    if (secondaryCheckIntervalRef.current) {
+      clearInterval(secondaryCheckIntervalRef.current)
+      secondaryCheckIntervalRef.current = null
     }
     // Clean up WebRTC service
     if (webRTCServiceRef.current) {
@@ -37,7 +37,7 @@ export const useWebRTC = () => {
         return
       }
       if (message === 'windowClosed') {
-        setIsSecondWindowOpen(false)
+        setIsSecondaryOpen(false)
         cleanup()
       } else if (message === 'windowReloading') {
         // Secondary window is reloading - don't destroy connection yet
@@ -68,7 +68,7 @@ export const useWebRTC = () => {
     if (!webRTCServiceRef.current) {
       webRTCServiceRef.current = new WebRTConnectionService(
         PeerRole.PRIMARY,
-        secondWindowRef.current,
+        secondaryRef.current,
         videoRef.current,
         updateStatus,
         handleMessage,
@@ -76,10 +76,10 @@ export const useWebRTC = () => {
     }
   }, [handleMessage, updateStatus])
 
-  // Open a new window to display the video
-  const openSecondWindow = useCallback(async () => {
-    if (secondWindowRef.current && !secondWindowRef.current.closed) {
-      secondWindowRef.current.focus()
+  // Open a secondary window to display the video
+  const openSecondary = useCallback(async () => {
+    if (secondaryRef.current && !secondaryRef.current.closed) {
+      secondaryRef.current.focus()
       return
     }
     try {
@@ -100,8 +100,8 @@ export const useWebRTC = () => {
         updateStatus('')
         return
       }
-      secondWindowRef.current = newWindow
-      setIsSecondWindowOpen(true)
+      secondaryRef.current = newWindow
+      setIsSecondaryOpen(true)
       updateStatus('Waiting for second window to load...')
 
       // Set up WebRTC service
@@ -110,10 +110,7 @@ export const useWebRTC = () => {
       // Setup message listener function
       const messageListener = (event: MessageEvent) => {
         // Only process messages from our secondary window
-        if (
-          event.source === secondWindowRef.current &&
-          webRTCServiceRef.current
-        ) {
+        if (event.source === secondaryRef.current && webRTCServiceRef.current) {
           webRTCServiceRef.current.handleMessage(event)
         }
       }
@@ -125,13 +122,13 @@ export const useWebRTC = () => {
       const checkWindowLoaded = setInterval(() => {
         if (newWindow.closed) {
           clearInterval(checkWindowLoaded)
-          setIsSecondWindowOpen(false)
+          setIsSecondaryOpen(false)
           window.removeEventListener('message', messageListener)
           cleanup()
         }
       }, 500)
       // Store the interval ID to clear it if needed
-      secondWindowCheckIntervalRef.current = checkWindowLoaded
+      secondaryCheckIntervalRef.current = checkWindowLoaded
     } catch (error) {
       updateStatus(
         `Error opening second window: ${error instanceof Error ? error.message : String(error)}`,
@@ -141,11 +138,11 @@ export const useWebRTC = () => {
   }, [cleanup, setupWebRTCService, updateStatus])
 
   // Close the second window
-  const closeSecondWindow = useCallback(() => {
-    if (secondWindowRef.current && !secondWindowRef.current.closed) {
-      secondWindowRef.current.close()
-      secondWindowRef.current = null
-      setIsSecondWindowOpen(false)
+  const closeSecondary = useCallback(() => {
+    if (secondaryRef.current && !secondaryRef.current.closed) {
+      secondaryRef.current.close()
+      secondaryRef.current = null
+      setIsSecondaryOpen(false)
       cleanup()
     }
   }, [cleanup])
@@ -176,17 +173,17 @@ export const useWebRTC = () => {
   // Clean up when component unmounts
   useEffect(() => {
     return () => {
-      closeSecondWindow()
+      closeSecondary()
     }
-  }, [closeSecondWindow])
+  }, [closeSecondary])
 
   return {
-    videoRef,
     status,
     updateStatus,
-    isSecondWindowOpen,
-    openSecondWindow,
-    closeSecondWindow,
+    isSecondaryOpen,
+    openSecondary,
+    closeSecondary,
+    videoRef,
     isPaused,
     togglePause,
   }
