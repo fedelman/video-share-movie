@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { useDualScreen } from '../../dual-screen/dual-screen-provider'
+import { useDualScreen } from '../../dual-screen'
 
 import { useVideo } from './useVideo'
 
