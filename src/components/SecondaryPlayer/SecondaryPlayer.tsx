@@ -1,33 +1,28 @@
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 
-import { useWebRTC } from './useWebRTC'
+import { useVideo } from './useVideo'
 
 export function SecondaryPlayer() {
-  const {
-    connectionStatus,
-    videoRef,
-    updateConnectionStatus,
-    togglePlayOnSecondary,
-  } = useWebRTC()
-
-  const [isPlaying, setIsPlaying] = useState(true)
+  const { videoRef, status, updateStatus, togglePause, isPaused } = useVideo()
 
   const handleVideoError = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-      updateConnectionStatus('Video error occurred. Check console for details.')
-      console.error('Video error: ', e)
+      updateStatus(
+        `Video error occurred. Check console for details: ${e}`,
+        true,
+      )
     },
-    [updateConnectionStatus],
+    [updateStatus],
   )
 
   const handleVideoPlay = useCallback(() => {
-    updateConnectionStatus('Video playing')
-  }, [updateConnectionStatus])
+    updateStatus('Video playing')
+  }, [updateStatus])
 
   return (
     <div className="video-container secondary">
-      <h1>Video Streaming Receiver (WebRTC)</h1>
-      <div className="connection-status">Status: {connectionStatus}</div>
+      <h1>Video Streaming Receiver (via WebRTC)</h1>
+      <div className="web-rtc-status">Status: {status.message}</div>
       <video
         ref={videoRef}
         autoPlay
@@ -42,10 +37,10 @@ export function SecondaryPlayer() {
 
       <button
         type="button"
-        onClick={() => setIsPlaying(togglePlayOnSecondary())}
+        onClick={togglePause}
         className="video-play-pause-button"
       >
-        {isPlaying ? 'pause' : 'play'}
+        {isPaused ? 'play' : 'pause'}
       </button>
 
       <p>

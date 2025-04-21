@@ -1,1 +1,2 @@
-export { useDualScreen, DualScreenProvider } from './dual-screen-provider'
+export { DualScreenProvider } from './dual-screen-provider'
+export { useDualScreen } from './useDualScreen'

@@ -1,6 +1,6 @@
 import './App.css'
 import { PrimaryPlayer } from './components/PrimaryPlayer'
-import { SecondaryPlayer } from './components/SeondaryPlayer'
+import { SecondaryPlayer } from './components/SecondaryPlayer'
 import { useDualScreen } from './dual-screen'
 
 function App() {
